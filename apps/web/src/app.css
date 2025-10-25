@@ -1,0 +1,79 @@
+@import 'tailwindcss';
+
+:root {
+	--color-page-bg: light-dark(var(--color-zinc-100), var(--color-zinc-900));
+	--color-page-fg: light-dark(var(--color-zinc-900), var(--color-zinc-100));
+}
+
+html, body {
+  height: 100vh;
+  margin: 0;
+}
+
+@theme {
+	--color-surface-token: light-dark(var(--color-zinc-500), var(--color-zinc-600));
+	--color-on-surface-token: light-dark(var(--color-zinc-800), var(--color-zinc-100));
+}
+
+@layer base {
+	body {
+		background-color: var(--color-page-bg);
+		color: var(--color-page-fg);
+		color-scheme: light dark;
+	}
+	h1 {
+		font-size: var(--text-5xl);
+		font-weight: var(--font-weight-black);
+	}
+	h2 {
+		font-size: var(--text-3xl);
+		font-weight: var(--font-weight-bold);
+	}
+	h3 {
+		font-size: var(--text-2xl);
+    font-weight: var(--font-weight-bold);
+	}
+	h4 {
+		font-size: var(--text-xl);
+		font-weight: var(--font-weight-semibold);
+	}
+	h5 {
+		font-size: var(--text-lg);
+		text-decoration: underline;
+	}
+	h6 {
+		font-weight: var(--font-weight-extralight);
+	}
+
+	:is(h1, h2, h3, h4, h5, h6) small {
+		margin-inline-start: 0.85rem;
+		display: inline-block;
+		font-size: 0.7em;
+		color: oklch(from currentColor l c h / 0.55);
+	}
+
+  button:not(.custom),
+  .btn {
+    background-color: var(--color-fuchsia-800);
+    color: var(--color-zinc-50);
+    padding: --spacing(2) --spacing(4);
+    border-radius: 999px;
+    &:active {
+      background-color: var(--color-fuchsia-900);
+    }
+    &:disabled {
+      background-color: var(--color-fuchsia-950);
+      cursor: not-allowed;
+    }
+    &.sm {
+      padding: --spacing(1) --spacing(2);
+      font-size: var(--text-sm);
+    }
+    &.lg {
+      font-size: var(--text-lg);
+      font-weight: var(--font-weight-extrabold);
+      line-height: var(--text-lg--line-height);
+    }
+  }
+
+}
