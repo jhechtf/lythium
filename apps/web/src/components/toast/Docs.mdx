@@ -1,0 +1,22 @@
+import { Canvas, Meta } from '@storybook/addon-docs/blocks';
+import * as ToastStories from './toast.stories.svelte';
+
+<Meta of={ToastStories} />
+
+# Toasts
+
+The Toast component is currently one of our weirder components because of how it currently functions.
+
+The available `Toast.svelte` component must be used in conjunction with the `ToastPortal.svelte` component
+in order to properly render the toasts onto the page. This is because the "public" Toast component
+simply registers the values with a context in order to display it in the correct location on the page.
+
+The ToastPortal does much of the heavy lifting, grouping items by the corresponding location
+and being responsible for displaying / removing them when appropriate.
+
+the `ToastInternal.svelte` is used by the ToastPortal component to offload the display, especially for
+auto dismissing the toasts after some time.
+
+Therefore, it should go without saying: ***DO NOT*** directly use the ToastInternal component.
+
+<Canvas of={ToastStories.Default} />

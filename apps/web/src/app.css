@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+:root {
+  --color-page-bg: light-dark(var(--color-zinc-100), var(--color-zinc-900));
+  --color-page-fg: light-dark(var(--color-zinc-900), var(--color-zinc-100));
+}
+
+html,
+body {
+  height: 100vh;
+  margin: 0;
+}
+
+@theme {
+  --color-surface-token: light-dark(
+    var(--color-zinc-500),
+    var(--color-zinc-800)
+  );
+  --color-on-surface-token: light-dark(
+    var(--color-zinc-800),
+    var(--color-zinc-100)
+  );
+  --color-error-token: light-dark(var(--color-rose-700), var(--color-rose-100));
+  --color-on-error-token: light-dark(
+    var(--color-red-100),
+    var(--color-red-800)
+  );
+  --color-warning-token: light-dark(
+    var(--color-orange-300),
+    var(--color-orange-200)
+  );
+  --color-on-warning-token: light-dark(
+    var(--color-orange-800),
+    var(--color-orange-800)
+  );
+}
+
+@layer base {
+  body {
+    background-color: var(--color-page-bg);
+    color: var(--color-page-fg);
+    color-scheme: light dark;
+  }
+
+  h1 {
+    font-size: var(--text-5xl);
+    font-weight: var(--font-weight-black);
+  }
+  h2 {
+    font-size: var(--text-3xl);
+    font-weight: var(--font-weight-bold);
+  }
+  h3 {
+    font-size: var(--text-2xl);
+    font-weight: var(--font-weight-bold);
+  }
+  h4 {
+    font-size: var(--text-lg);
+    font-weight: var(--font-weight-semibold);
+  }
+  h5 {
+    text-decoration: underline;
+  }
+  h6 {
+    font-weight: var(--font-weight-extralight);
+  }
+
+  :is(h1, h2, h3, h4, h5, h6) small {
+    margin-inline-start: 0.85rem;
+    display: inline-block;
+    font-size: 0.7em;
+    color: oklch(from currentColor l c h / 0.55);
+  }
+
+  button:not(.custom),
+  .btn {
+    background-color: var(--color-fuchsia-800);
+    color: var(--color-zinc-50);
+    padding: --spacing(2) --spacing(4);
+    border-radius: 999px;
+    &:active {
+      background-color: var(--color-fuchsia-900);
+    }
+    &.hover {
+      background-color: unset;
+      &:hover {
+        background-color: oklch(from var(--color-zinc-300) l c h / 0.4);
+      }
+    }
+
+    &:disabled {
+      background-color: var(--color-fuchsia-950);
+      cursor: not-allowed;
+    }
+    &.xs {
+      padding: --spacing(1);
+      font-size: var(--text-xs);
+    }
+    &.sm {
+      padding: --spacing(1) --spacing(2);
+      font-size: var(--text-sm);
+    }
+    &.lg {
+      font-size: var(--text-lg);
+      font-weight: var(--font-weight-extrabold);
+      line-height: var(--text-lg--line-height);
+    }
+  }
+}

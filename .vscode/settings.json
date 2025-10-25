@@ -1,0 +1,8 @@
+{
+  "lnf.aliases": {
+    "$/": "${workspaceRoot}/",
+    "$components/": "${workspaceRoot}/src/components/"
+  },
+  "editor.defaultFormatter": "biomejs.biome",
+  "biome.enabled": true
+}
