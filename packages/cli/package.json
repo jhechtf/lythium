@@ -1,0 +1,34 @@
+{
+  "name": "@lythium/cli",
+  "version": "0.1.0",
+  "description": "Lythium CLI (first iteration)",
+  "type": "module",
+  "bin": {
+    "ly": "./dist/index.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown src/index.ts --format esm --target node20 --out-dir dist",
+    "start": "node ./dist/cli.js"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.0.1",
+    "commander": "^11.1.0",
+    "conf": "^11.0.0",
+    "enquirer": "^2.4.1",
+    "env-paths": "^2.2.0",
+"picocolors": "^1.1.0",
+    "undici": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsdown": "^0.20.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.0.0"
+  },
+  "imports": {
+    "#package.json": "./package.json"
+  }
+}
