@@ -101,44 +101,63 @@ program
       }
 
       // Check if PR already exists
-      const existing: any[] = await githubRequest(
-        'GET',
-        `/repos/${owner}/${repo}/pulls?head=${owner}:${encodeURIComponent(b)}&state=open`,
-        token,
-      );
+      let existing: any[];
+      try {
+        existing = await githubRequest(
+          'GET',
+          `/repos/${owner}/${repo}/pulls?head=${owner}:${encodeURIComponent(b)}&state=open`,
+          token,
+        );
+      } catch (e: any) {
+        console.error(pc.red(`  Failed to list PRs for ${pc.bold(b)}: ${e.message}`));
+        process.exit(1);
+      }
 
-      if (existing.length > 0) {
+      if (existing!.length > 0) {
         // Update existing PR
-        const pr = existing[0];
-        await githubRequest('PATCH', `/repos/${owner}/${repo}/pulls/${pr.number}`, token, {
-          base,
-          ...(opts.title && branches.length === 1 ? { title: opts.title } : {}),
-          ...(opts.body ? { body: opts.body } : {}),
-        });
+        const pr = existing![0];
+        try {
+          await githubRequest('PATCH', `/repos/${owner}/${repo}/pulls/${pr.number}`, token, {
+            base,
+            ...(opts.title && branches.length === 1 ? { title: opts.title } : {}),
+            ...(opts.body ? { body: opts.body } : {}),
+          });
+        } catch (e: any) {
+          console.error(pc.red(`  Failed to update PR #${pr.number} for ${pc.bold(b)}: ${e.message}`));
+          process.exit(1);
+        }
         meta.prNumber = pr.number;
         meta.prUrl = pr.html_url;
         console.log(pc.dim(`  updated PR #${pr.number}: ${pr.html_url}`));
       } else {
         // Create new PR
         const title = (opts.title && branches.length === 1) ? opts.title : b;
-        const created: any = await githubRequest(
-          'POST',
-          `/repos/${owner}/${repo}/pulls`,
-          token,
-          {
-            title,
-            head: b,
-            base,
-            body: opts.body ?? '',
-            draft: opts.draft ?? false,
-          },
-        );
+        let created: any;
+        try {
+          created = await githubRequest(
+            'POST',
+            `/repos/${owner}/${repo}/pulls`,
+            token,
+            {
+              title,
+              head: b,
+              base,
+              body: opts.body ?? '',
+              draft: opts.draft ?? false,
+            },
+          );
+        } catch (e: any) {
+          console.error(pc.red(`  Failed to create PR for ${pc.bold(b)}: ${e.message}`));
+          process.exit(1);
+        }
         meta.prNumber = created.number;
         meta.prUrl = created.html_url;
         console.log(pc.green(`  created PR #${created.number}: ${created.html_url}`));
       }
+
+      // Save after each branch so PR metadata isn't lost if a later branch fails
+      save(store);
     }
 
-    save(store);
     outro(pc.green(`Submitted ${branches.length} branch(es)`));
   });
