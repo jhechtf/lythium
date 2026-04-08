@@ -1,0 +1,13 @@
+{
+  "name": "@lythium/api",
+  "dependencies": {
+    "hono": "^4.11.10"
+  },
+  "exports": {
+    ".": "./main.ts",
+    "./types": "./types.ts"
+  },
+  "scripts": {
+    "dev": "deno run --watch -N main.ts"
+  }
+}
