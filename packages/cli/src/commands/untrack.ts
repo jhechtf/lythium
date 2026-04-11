@@ -21,20 +21,25 @@ program
     const branch = branchArg ?? currentBranch();
 
     if (branch === store.trunk) {
-      console.error(pc.red(`Cannot untrack trunk branch (${pc.bold(store.trunk)}).`));
+      console.error(
+        pc.red(`Cannot untrack trunk branch (${pc.bold(store.trunk)}).`),
+      );
       process.exit(1);
     }
 
     if (!store.branches[branch]) {
-      console.error(pc.red(`Branch ${pc.bold(branch)} is not tracked by Lythium.`));
+      console.error(
+        pc.red(`Branch ${pc.bold(branch)} is not tracked by Lythium.`),
+      );
       process.exit(1);
     }
 
     const children = getChildren(store, branch);
     if (children.length > 0) {
       console.log(
-        pc.yellow(`Warning: ${pc.bold(branch)} has ${children.length} child branch(es) that will lose their parent reference: `) +
-        children.map(pc.bold).join(', ')
+        pc.yellow(
+          `Warning: ${pc.bold(branch)} has ${children.length} child branch(es) that will lose their parent reference: `,
+        ) + children.map(pc.bold).join(', '),
       );
     }
 

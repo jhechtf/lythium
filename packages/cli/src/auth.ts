@@ -17,12 +17,15 @@ auth
     console.log(
       pc.dim(
         'Create a token at: https://github.com/settings/tokens\n' +
-        'Required scopes: repo, read:user'
-      )
+          'Required scopes: repo, read:user',
+      ),
     );
 
     const token = await password({ message: 'GitHub Personal Access Token:' });
-    if (isCancel(token)) { cancel(); process.exit(0); }
+    if (isCancel(token)) {
+      cancel();
+      process.exit(0);
+    }
 
     const tokenStr = token as string;
 
@@ -40,7 +43,9 @@ auth
 
       if (!res.ok) {
         process.stdout.write(pc.red('✗\n'));
-        cancel(`Invalid token (HTTP ${res.status}). Check that it has the required scopes.`);
+        cancel(
+          `Invalid token (HTTP ${res.status}). Check that it has the required scopes.`,
+        );
         process.exit(1);
       }
 
@@ -88,7 +93,11 @@ auth
         },
       });
       if (!res.ok) {
-        console.log(pc.red(`Token stored but invalid (HTTP ${res.status}). Run \`ly auth login\` again.`));
+        console.log(
+          pc.red(
+            `Token stored but invalid (HTTP ${res.status}). Run \`ly auth login\` again.`,
+          ),
+        );
         return;
       }
       const user: any = await res.json();

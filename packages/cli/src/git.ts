@@ -104,13 +104,21 @@ export function rebase(onto: string): void {
 }
 
 /** Checkout `branch`, rebase it onto `onto`, then return to `returnTo`. */
-export function forceRebase(branch: string, onto: string, returnTo: string): void {
+export function forceRebase(
+  branch: string,
+  onto: string,
+  returnTo: string,
+): void {
   checkout(branch);
   try {
     git(`rebase ${onto}`);
   } finally {
     // Return to original branch even if rebase fails
-    try { checkout(returnTo); } catch { /* ignore */ }
+    try {
+      checkout(returnTo);
+    } catch {
+      /* ignore */
+    }
   }
 }
 

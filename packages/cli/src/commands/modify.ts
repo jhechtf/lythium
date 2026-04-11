@@ -2,8 +2,12 @@ import { program } from 'commander';
 import { outro, text, isCancel, cancel } from '@clack/prompts';
 import pc from 'picocolors';
 import {
-  currentBranch, stageAll, hasStagedChanges,
-  amendCommit, forceRebase, checkout,
+  currentBranch,
+  stageAll,
+  hasStagedChanges,
+  amendCommit,
+  forceRebase,
+  checkout,
 } from '../git.ts';
 import { load, save, LyError } from '../store.ts';
 import { getAllDescendants } from '../stack.ts';
@@ -25,23 +29,31 @@ program
     const branch = currentBranch();
 
     if (branch === store.trunk) {
-      console.error(pc.red('Cannot modify trunk. Create a new branch with `ly create`.'));
+      console.error(
+        pc.red('Cannot modify trunk. Create a new branch with `ly create`.'),
+      );
       process.exit(1);
     }
 
     if (!store.branches[branch]) {
-      console.error(pc.red(`Branch ${pc.bold(branch)} is not tracked. Run \`ly track\` to add it.`));
+      console.error(
+        pc.red(
+          `Branch ${pc.bold(branch)} is not tracked. Run \`ly track\` to add it.`,
+        ),
+      );
       process.exit(1);
     }
 
     if (opts.all) stageAll();
 
     if (!hasStagedChanges() && !opts.message) {
-      console.error(pc.red('Nothing staged and no --message given. Nothing to amend.'));
+      console.error(
+        pc.red('Nothing staged and no --message given. Nothing to amend.'),
+      );
       process.exit(1);
     }
 
-    let message = opts.message;
+    const message = opts.message;
     if (!message && !opts.all) {
       // Only ask for message if we have staged changes but no -m
       const hasStagedNow = hasStagedChanges();
@@ -64,6 +76,10 @@ program
     }
 
     save(store);
-    outro(pc.green(`Modified ${pc.bold(branch)}`) +
-      (descendants.length > 0 ? pc.dim(` · restacked ${descendants.length} branch(es)`) : ''));
+    outro(
+      pc.green(`Modified ${pc.bold(branch)}`) +
+        (descendants.length > 0
+          ? pc.dim(` · restacked ${descendants.length} branch(es)`)
+          : ''),
+    );
   });

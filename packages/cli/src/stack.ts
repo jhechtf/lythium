@@ -1,5 +1,5 @@
-import type { LyStore } from './store.ts';
 import pc from 'picocolors';
+import type { LyStore } from './store.ts';
 
 export function getChildren(store: LyStore, branch: string): string[] {
   return Object.entries(store.branches)
@@ -39,6 +39,51 @@ export function getStack(store: LyStore, branch: string): string[] {
   return [store.trunk, ...getAncestors(store, branch), branch];
 }
 
+// ─── PR body stack section ───────────────────────────────────────────────────
+
+const STACK_START = '<!-- lythium-stack-start -->';
+const STACK_END = '<!-- lythium-stack-end -->';
+
+function formatBranchEntry(store: LyStore, b: string): string {
+  const meta = store.branches[b];
+  if (b === store.trunk) return `\`${b}\` (trunk)`;
+  if (meta?.prUrl && meta?.prNumber) return `[${b}](${meta.prUrl}) (#${meta.prNumber})`;
+  return `\`${b}\``;
+}
+
+/** Build the markdown stack section to embed in a PR body. */
+export function buildStackSection(store: LyStore, branch: string): string {
+  const ancestors = getStack(store, branch); // trunk → branch
+  const descendants = getAllDescendants(store, branch); // BFS children below branch
+
+  const lines = [
+    ...ancestors.map((b) => {
+      const entry = formatBranchEntry(store, b);
+      return b === branch ? `- **${entry} ← this PR**` : `- ${entry}`;
+    }),
+    ...descendants.map((b) => `- ${formatBranchEntry(store, b)}`),
+  ];
+
+  return [
+    STACK_START,
+    '---',
+    '*Stack — managed by [lythium](https://github.com/jhechtf/lythium):*',
+    '',
+    ...lines,
+    STACK_END,
+  ].join('\n');
+}
+
+/** Strip a previously embedded stack section from a PR body. */
+export function stripStackSection(body: string): string {
+  return body
+    .replace(
+      new RegExp(`\\n*${STACK_START}[\\s\\S]*?${STACK_END}\\n*`, 'g'),
+      '',
+    )
+    .trimEnd();
+}
+
 // ─── Tree rendering ──────────────────────────────────────────────────────────
 
 function renderNode(
@@ -57,7 +102,13 @@ function renderNode(
   const childPrefix = prefix + (isLast ? '    ' : '│   ');
   const children = getChildren(store, branch);
   const childLines = children.map((child, i) =>
-    renderNode(store, child, currentBranch, childPrefix, i === children.length - 1)
+    renderNode(
+      store,
+      child,
+      currentBranch,
+      childPrefix,
+      i === children.length - 1,
+    ),
   );
 
   return [`${prefix}${connector}${label}${prInfo}`, ...childLines].join('\n');
@@ -75,7 +126,7 @@ export function renderTree(store: LyStore, currentBranch: string): string {
   }
 
   const childLines = children.map((child, i) =>
-    renderNode(store, child, currentBranch, '', i === children.length - 1)
+    renderNode(store, child, currentBranch, '', i === children.length - 1),
   );
   return [trunkLabel, ...childLines].join('\n');
 }

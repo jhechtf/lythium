@@ -31,7 +31,11 @@ program
         // On trunk — restack everything
         toRestack = getAllDescendants(store, store.trunk);
       } else if (!store.branches[branch]) {
-        console.error(pc.red(`Branch ${pc.bold(branch)} is not tracked. Run \`ly track\` to add it.`));
+        console.error(
+          pc.red(
+            `Branch ${pc.bold(branch)} is not tracked. Run \`ly track\` to add it.`,
+          ),
+        );
         process.exit(1);
       } else {
         // Only restack descendants of current branch

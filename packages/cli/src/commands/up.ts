@@ -21,7 +21,11 @@ program
     const children = getChildren(store, branch);
 
     if (children.length === 0) {
-      console.log(pc.yellow(`${pc.bold(branch)} has no child branches — already at the top.`));
+      console.log(
+        pc.yellow(
+          `${pc.bold(branch)} has no child branches — already at the top.`,
+        ),
+      );
       return;
     }
 
@@ -33,7 +37,10 @@ program
         message: 'Multiple children — choose one:',
         options: children.map((c) => ({ value: c, label: c })),
       });
-      if (isCancel(choice)) { cancel(); process.exit(0); }
+      if (isCancel(choice)) {
+        cancel();
+        process.exit(0);
+      }
       target = choice as string;
     }
 
@@ -62,7 +69,11 @@ program
 
     const meta = store.branches[branch];
     if (!meta) {
-      console.error(pc.red(`Branch ${pc.bold(branch)} is not tracked. Run \`ly track\` to add it.`));
+      console.error(
+        pc.red(
+          `Branch ${pc.bold(branch)} is not tracked. Run \`ly track\` to add it.`,
+        ),
+      );
       process.exit(1);
     }
 

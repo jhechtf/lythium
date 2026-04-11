@@ -21,7 +21,11 @@ program
 
     if (opts.short) {
       if (!store.branches[branch] && branch !== store.trunk) {
-        console.error(pc.red(`Branch ${pc.bold(branch)} is not tracked. Run \`ly track\` to add it.`));
+        console.error(
+          pc.red(
+            `Branch ${pc.bold(branch)} is not tracked. Run \`ly track\` to add it.`,
+          ),
+        );
         process.exit(1);
       }
       console.log(renderShortStack(store, branch));

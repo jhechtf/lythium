@@ -35,7 +35,9 @@ export function isInitialized(): boolean {
 export function load(): LyStore {
   const path = getStorePath();
   if (!existsSync(path)) {
-    throw new LyError('Lythium is not initialized in this repo. Run `ly init` first.');
+    throw new LyError(
+      'Lythium is not initialized in this repo. Run `ly init` first.',
+    );
   }
   return JSON.parse(readFileSync(path, 'utf8')) as LyStore;
 }

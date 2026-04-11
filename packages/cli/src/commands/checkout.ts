@@ -19,11 +19,15 @@ program
     }
 
     const current = currentBranch();
-    const tracked = [store.trunk, ...Object.keys(store.branches)].filter((b) => b !== current);
+    const tracked = [store.trunk, ...Object.keys(store.branches)].filter(
+      (b) => b !== current,
+    );
 
     if (branchArg) {
       if (branchArg !== store.trunk && !store.branches[branchArg]) {
-        console.error(pc.red(`Branch ${pc.bold(branchArg)} is not tracked by Lythium.`));
+        console.error(
+          pc.red(`Branch ${pc.bold(branchArg)} is not tracked by Lythium.`),
+        );
         process.exit(1);
       }
       gitCheckout(branchArg);
@@ -40,12 +44,17 @@ program
       message: 'Switch to branch:',
       options: tracked.map((b) => {
         const meta = store.branches[b];
-        const hint = meta ? `parent: ${meta.parent}${meta.prNumber ? ` · PR #${meta.prNumber}` : ''}` : 'trunk';
+        const hint = meta
+          ? `parent: ${meta.parent}${meta.prNumber ? ` · PR #${meta.prNumber}` : ''}`
+          : 'trunk';
         return { value: b, label: b, hint };
       }),
     });
 
-    if (isCancel(choice)) { cancel(); process.exit(0); }
+    if (isCancel(choice)) {
+      cancel();
+      process.exit(0);
+    }
 
     gitCheckout(choice as string);
     console.log(pc.green(`Switched to ${pc.bold(choice as string)}`));

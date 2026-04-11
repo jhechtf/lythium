@@ -38,16 +38,24 @@ program
         placeholder: 'main',
         validate: (v) => (v.trim() ? undefined : 'Branch name is required'),
       });
-      if (isCancel(input)) { cancel(); process.exit(0); }
+      if (isCancel(input)) {
+        cancel();
+        process.exit(0);
+      }
       trunk = (input as string).trim();
     } else {
-      const ok = await confirm({ message: `Use ${pc.bold(trunk)} as trunk branch?` });
+      const ok = await confirm({
+        message: `Use ${pc.bold(trunk)} as trunk branch?`,
+      });
       if (isCancel(ok) || !ok) {
         const input = await text({
           message: 'Trunk branch name:',
           validate: (v) => (v.trim() ? undefined : 'Branch name is required'),
         });
-        if (isCancel(input)) { cancel(); process.exit(0); }
+        if (isCancel(input)) {
+          cancel();
+          process.exit(0);
+        }
         trunk = (input as string).trim();
       }
     }

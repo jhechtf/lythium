@@ -1,7 +1,14 @@
 import { program } from 'commander';
 import { outro, multiselect, isCancel, cancel } from '@clack/prompts';
 import pc from 'picocolors';
-import { fetch, currentBranch, isMergedInto, deleteBranch, forceRebase, checkout } from '../git.ts';
+import {
+  fetch,
+  currentBranch,
+  isMergedInto,
+  deleteBranch,
+  forceRebase,
+  checkout,
+} from '../git.ts';
 import { load, save, LyError } from '../store.ts';
 import { getAllDescendants } from '../stack.ts';
 
@@ -58,7 +65,9 @@ program
         for (const b of toDelete as string[]) {
           // Move children of deleted branch up to its parent
           const meta = store.branches[b];
-          const children = Object.entries(store.branches).filter(([, m]) => m.parent === b);
+          const children = Object.entries(store.branches).filter(
+            ([, m]) => m.parent === b,
+          );
           for (const [child, childMeta] of children) {
             childMeta.parent = meta.parent;
             console.log(pc.dim(`  Reparenting ${child} → ${meta.parent}`));

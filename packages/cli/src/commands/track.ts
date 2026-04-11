@@ -25,13 +25,17 @@ program
     }
 
     if (store.branches[branch]) {
-      console.log(pc.yellow(`${pc.bold(branch)} is already tracked (parent: ${store.branches[branch].parent}).`));
+      console.log(
+        pc.yellow(
+          `${pc.bold(branch)} is already tracked (parent: ${store.branches[branch].parent}).`,
+        ),
+      );
       return;
     }
 
     // Options for parent: trunk + all tracked branches except the branch itself
     const parentOptions = [store.trunk, ...Object.keys(store.branches)].filter(
-      (b) => b !== branch
+      (b) => b !== branch,
     );
 
     const choice = await select({
@@ -43,11 +47,16 @@ program
       })),
     });
 
-    if (isCancel(choice)) { cancel(); process.exit(0); }
+    if (isCancel(choice)) {
+      cancel();
+      process.exit(0);
+    }
 
     const parent = choice as string;
     store.branches[branch] = { parent };
     save(store);
 
-    outro(pc.green(`Tracking ${pc.bold(branch)}`) + pc.dim(` (parent: ${parent})`));
+    outro(
+      pc.green(`Tracking ${pc.bold(branch)}`) + pc.dim(` (parent: ${parent})`),
+    );
   });
