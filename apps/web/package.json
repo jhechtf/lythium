@@ -52,8 +52,13 @@
   "dependencies": {
     "arktype": "^2.1.27",
     "cva": "^0.0.0",
+    "diff2html": "^3.4.56",
+    "highlight.js": "^11.11.1",
     "lucide-svelte": "^0.554.0",
     "octokit": "^5.0.5",
     "runed": "^0.36.0"
+  },
+  "imports": {
+    "#app.css": "./src/app.css"
   }
 }

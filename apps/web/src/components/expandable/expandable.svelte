@@ -1,6 +1,6 @@
 <script lang="ts" module>
 import type { Snippet } from 'svelte';
-import type { HTMLDetailsAttributes, ClassValue } from 'svelte/elements';
+import type { ClassValue, HTMLDetailsAttributes } from 'svelte/elements';
 
 export type ExpandableProps = {
 	children?: Snippet<[]>;
