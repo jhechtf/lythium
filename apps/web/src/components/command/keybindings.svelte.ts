@@ -6,14 +6,14 @@ import { browser } from '$app/environment';
  * @returns
  */
 export function generateSpecificKeybinds(keybind: string) {
-  const keyparts = keybind.split('+');
+  const _keyparts = keybind.split('+');
 
-  let os: 'macos' | 'windows' | 'linux' = 'linux';
+  let _os: 'macos' | 'windows' | 'linux' = 'linux';
 
   if (!browser) return keybind;
 
   if (navigator.userAgent.includes('Macintosh')) {
-    os = 'macos';
+    _os = 'macos';
   }
 
   return '';

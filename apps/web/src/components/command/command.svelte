@@ -13,7 +13,7 @@ export type CommandProps = {
 	let dialogEl: HTMLDialogElement;
 
 	onMount(() => {
-		const off = on(dialogEl, 'close', (e) => {
+		const off = on(dialogEl, 'close', (_e) => {
       show = false;
 		});
 

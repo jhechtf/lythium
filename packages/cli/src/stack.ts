@@ -12,7 +12,7 @@ export function getAllDescendants(store: LyStore, branch: string): string[] {
   const result: string[] = [];
   const queue = [...getChildren(store, branch)];
   while (queue.length > 0) {
-    const curr = queue.shift()!;
+    const curr = queue.shift() as string;
     result.push(curr);
     queue.push(...getChildren(store, curr));
   }
@@ -47,7 +47,8 @@ const STACK_END = '<!-- lythium-stack-end -->';
 function formatBranchEntry(store: LyStore, b: string): string {
   const meta = store.branches[b];
   if (b === store.trunk) return `\`${b}\` (trunk)`;
-  if (meta?.prUrl && meta?.prNumber) return `[${b}](${meta.prUrl}) (#${meta.prNumber})`;
+  if (meta?.prUrl && meta?.prNumber)
+    return `[${b}](${meta.prUrl}) (#${meta.prNumber})`;
   return `\`${b}\``;
 }
 
@@ -77,7 +78,10 @@ export function buildStackSection(store: LyStore, branch: string): string {
 /** Strip a previously embedded stack section from a PR body. */
 export function stripStackSection(body: string): string {
   return body
-    .replace(new RegExp(`\\n*${STACK_START}[\\s\\S]*?${STACK_END}\\n*`, 'g'), '')
+    .replace(
+      new RegExp(`\\n*${STACK_START}[\\s\\S]*?${STACK_END}\\n*`, 'g'),
+      '',
+    )
     .trimEnd();
 }
 

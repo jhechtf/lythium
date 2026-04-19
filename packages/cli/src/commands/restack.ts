@@ -1,16 +1,16 @@
-import { program } from 'commander';
 import { outro } from '@clack/prompts';
+import { program } from 'commander';
 import pc from 'picocolors';
-import { currentBranch, forceRebase, checkout } from '../git.ts';
-import { load, save, LyError } from '../store.ts';
+import { checkout, currentBranch, forceRebase } from '../git.ts';
 import { getAllDescendants } from '../stack.ts';
+import { LyError, type LyStore, load, save } from '../store.ts';
 
 program
   .command('restack')
   .description('Rebase branches onto their parents to fix stack alignment')
   .option('--all', 'restack every tracked branch (not just current stack)')
   .action((opts: { all?: boolean }) => {
-    let store;
+    let store: LyStore;
     try {
       store = load();
     } catch (e) {

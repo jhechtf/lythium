@@ -1,8 +1,8 @@
+import { cancel, intro, isCancel, outro, password } from '@clack/prompts';
 import { program } from 'commander';
-import { intro, outro, password, isCancel, cancel } from '@clack/prompts';
 import pc from 'picocolors';
 import { fetch } from 'undici';
-import { getToken, setToken, deleteToken } from './credentials.ts';
+import { deleteToken, getToken, setToken } from './credentials.ts';
 
 export const auth = program
   .command('auth')
@@ -49,17 +49,17 @@ auth
         process.exit(1);
       }
 
-      const user: any = await res.json();
+      const user = (await res.json()) as { login: string };
       username = user.login;
       process.stdout.write(pc.green('✓\n'));
-    } catch (e: any) {
+    } catch (e) {
       process.stdout.write(pc.red('✗\n'));
-      cancel(`Network error: ${e.message}`);
+      cancel(`Network error: ${(e as Error).message}`);
       process.exit(1);
     }
 
     setToken(tokenStr);
-    outro(pc.green(`Logged in as ${pc.bold('@' + username)}`));
+    outro(pc.green(`Logged in as ${pc.bold(`@${username}`)}`));
   });
 
 auth
@@ -100,8 +100,8 @@ auth
         );
         return;
       }
-      const user: any = await res.json();
-      console.log(pc.green(`Logged in as ${pc.bold('@' + user.login)}`));
+      const user = (await res.json()) as { login: string };
+      console.log(pc.green(`Logged in as ${pc.bold(`@${user.login}`)}`));
     } catch {
       console.log(pc.yellow('Token stored but could not reach GitHub.'));
     }

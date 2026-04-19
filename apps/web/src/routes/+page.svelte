@@ -1,5 +1,6 @@
 <script lang="ts">
 import Stack from '../components/stack/stack.svelte';
+
 let { data } = $props();
 const stuff = $derived(await data.results);
 </script>

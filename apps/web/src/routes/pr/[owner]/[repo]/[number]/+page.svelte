@@ -1,9 +1,9 @@
 <script lang="ts">
+import { TriangleIcon } from 'lucide-svelte';
 import DiffViewer from '$components/diffViewer/diffViewer.svelte';
 import Expandable from '$components/expandable/expandable.svelte';
 import FileTree from '$components/fileTree/fileTree.svelte';
 import Header from '$components/header/header.svelte';
-import { TriangleIcon } from 'lucide-svelte';
 
 let { data } = $props();
 </script>

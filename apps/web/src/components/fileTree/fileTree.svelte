@@ -1,6 +1,6 @@
 <script lang="ts">
-import { FileIcon, FolderIcon, FolderOpenIcon, ChevronRightIcon } from 'lucide-svelte';
 import type { DiffFile } from '@lythium/api/types';
+import { ChevronRightIcon, FileIcon, FolderIcon, FolderOpenIcon } from 'lucide-svelte';
 
 let { files }: { files: DiffFile[] } = $props();
 
@@ -40,6 +40,7 @@ let collapsed = $state<Record<string, boolean>>({});
 			{@const isOpen = !collapsed[fullPath]}
 			<li>
 				<button
+					type="button"
 					class="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-xs hover:bg-zinc-700"
 					style="padding-left: {depth * 12 + 4}px"
 					onclick={() => {

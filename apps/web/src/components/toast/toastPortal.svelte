@@ -1,7 +1,8 @@
 <script lang="ts">
-import { toasts, type ToastObject, type ToastPosition } from './toastState.svelte';
 import { cva } from 'class-variance-authority';
 import ToastInternal from './toastInternal.svelte';
+import { type ToastObject, type ToastPosition, toasts } from './toastState.svelte';
+
 // TODO: Would it make sense to make the toast export some kind of object and just do this
 // in the state file itself?
 const toastsByArea = $derived(

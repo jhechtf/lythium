@@ -1,7 +1,7 @@
 <script lang="ts" module>
 import { defineMeta } from '@storybook/addon-svelte-csf';
-import Alert from './alert.svelte';
 import { TriangleAlertIcon } from 'lucide-svelte';
+import Alert from './alert.svelte';
 
 const { Story } = defineMeta({
 	component: Alert,

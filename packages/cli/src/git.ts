@@ -22,8 +22,9 @@ function git(cmd: string): string {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
-  } catch (e: any) {
-    throw new GitError(e.stderr?.toString().trim() || e.message);
+  } catch (e) {
+    const err = e as { stderr?: Buffer; message: string };
+    throw new GitError(err.stderr?.toString().trim() || err.message);
   }
 }
 

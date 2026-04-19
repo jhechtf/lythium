@@ -1,22 +1,22 @@
+import { isCancel, multiselect, outro } from '@clack/prompts';
 import { program } from 'commander';
-import { outro, multiselect, isCancel, cancel } from '@clack/prompts';
 import pc from 'picocolors';
 import {
-  fetch,
-  currentBranch,
-  isMergedInto,
-  deleteBranch,
-  forceRebase,
   checkout,
+  currentBranch,
+  deleteBranch,
+  fetch,
+  forceRebase,
+  isMergedInto,
 } from '../git.ts';
-import { load, save, LyError } from '../store.ts';
 import { getAllDescendants } from '../stack.ts';
+import { LyError, type LyStore, load, save } from '../store.ts';
 
 program
   .command('sync')
   .description('Fetch from origin, clean up merged branches, and restack')
   .action(async () => {
-    let store;
+    let store: LyStore;
     try {
       store = load();
     } catch (e) {
@@ -29,9 +29,9 @@ program
     try {
       fetch();
       process.stdout.write(pc.green('✓\n'));
-    } catch (e: any) {
+    } catch (e) {
       process.stdout.write(pc.red('✗\n'));
-      console.error(pc.red(`Fetch failed: ${e.message}`));
+      console.error(pc.red(`Fetch failed: ${(e as Error).message}`));
       process.exit(1);
     }
 
@@ -49,7 +49,7 @@ program
 
     if (merged.length > 0) {
       console.log(pc.dim(`\nFound ${merged.length} merged branch(es):`));
-      merged.forEach((b) => console.log(pc.dim(`  ${b}`)));
+      for (const b of merged) console.log(pc.dim(`  ${b}`));
 
       const toDelete = await multiselect({
         message: 'Select branches to delete:',

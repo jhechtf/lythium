@@ -1,8 +1,8 @@
+import { cancel, isCancel, select } from '@clack/prompts';
 import { program } from 'commander';
-import { select, isCancel, cancel } from '@clack/prompts';
 import pc from 'picocolors';
-import { checkout as gitCheckout, currentBranch } from '../git.ts';
-import { load, LyError } from '../store.ts';
+import { currentBranch, checkout as gitCheckout } from '../git.ts';
+import { LyError, type LyStore, load } from '../store.ts';
 
 program
   .command('checkout')
@@ -10,7 +10,7 @@ program
   .description('Switch to a tracked branch (interactive if no branch given)')
   .argument('[branch]', 'branch to switch to')
   .action(async (branchArg: string | undefined) => {
-    let store;
+    let store: LyStore;
     try {
       store = load();
     } catch (e) {

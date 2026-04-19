@@ -1,8 +1,8 @@
+import { cancel, confirm, intro, isCancel, outro, text } from '@clack/prompts';
 import { program } from 'commander';
-import { intro, outro, text, confirm, isCancel, cancel } from '@clack/prompts';
 import pc from 'picocolors';
 import { isGitRepo, listLocalBranches } from '../git.ts';
-import { isInitialized, init } from '../store.ts';
+import { init, isInitialized } from '../store.ts';
 
 program
   .command('init')

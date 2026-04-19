@@ -1,4 +1,4 @@
-import { App, OAuthApp } from 'octokit';
+import { OAuthApp } from 'octokit';
 import {
   GITHUB_APP_CLIENT_ID,
   GITHUB_APP_CLIENT_SECRET,

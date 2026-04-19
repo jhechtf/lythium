@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 
-export const load = async ({ cookies, locals }) => {
+export const load = async ({ cookies: _cookies, locals }) => {
   const user = await locals.octokit.rest.users
     .getAuthenticated()
     .then((r) => r.data);
