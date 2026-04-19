@@ -1,5 +1,6 @@
 <script lang="ts" module>
 import { cva, type VariantProps } from 'class-variance-authority';
+
 const variants = cva('', {
 	variants: {
 		variant: {
@@ -20,20 +21,20 @@ export type AlertProps = {
 } & AlertVariantProps;
 </script>
 <script lang="ts">
+  import { XIcon } from 'lucide-svelte';
   import type { Snippet } from 'svelte';
-	import { XIcon } from 'lucide-svelte';
 
   let { children, variant, onclose = () => void 0 }: AlertProps = $props();
   const classes = $derived(variants({ variant }));
 </script>
 
-<div class={['rounded-xl border py-3 px-4 flex justify-between', classes]} role="">
+<div class={['rounded-xl border py-3 px-4 flex justify-between', classes]} >
 
   <div>
     {@render children?.()}
   </div>
 
-  <button class="xs hover text-inherit" onclick={() => onclose()}>
+  <button type="button" class="xs hover text-inherit" onclick={() => onclose()}>
     <XIcon size="1em"/>
   </button>
 </div>

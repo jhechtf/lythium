@@ -1,15 +1,15 @@
 import { program } from 'commander';
 import pc from 'picocolors';
 import { currentBranch } from '../git.ts';
-import { load, LyError } from '../store.ts';
-import { renderTree, renderShortStack } from '../stack.ts';
+import { renderShortStack, renderTree } from '../stack.ts';
+import { LyError, type LyStore, load } from '../store.ts';
 
 program
   .command('log')
   .description('Show the stack tree')
   .option('-s, --short', 'show only the current stack lineage')
   .action((opts: { short?: boolean }) => {
-    let store;
+    let store: LyStore;
     try {
       store = load();
     } catch (e) {

@@ -1,15 +1,15 @@
+import { cancel, isCancel, select } from '@clack/prompts';
 import { program } from 'commander';
-import { select, isCancel, cancel } from '@clack/prompts';
 import pc from 'picocolors';
 import { checkout, currentBranch } from '../git.ts';
-import { load, LyError } from '../store.ts';
 import { getChildren } from '../stack.ts';
+import { LyError, type LyStore, load } from '../store.ts';
 
 program
   .command('up')
   .description('Move up the stack to a child branch')
   .action(async () => {
-    let store;
+    let store: LyStore;
     try {
       store = load();
     } catch (e) {
@@ -52,7 +52,7 @@ program
   .command('down')
   .description('Move down the stack to the parent branch')
   .action(() => {
-    let store;
+    let store: LyStore;
     try {
       store = load();
     } catch (e) {

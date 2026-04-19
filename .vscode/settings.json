@@ -8,7 +8,5 @@
   "editor.defaultFormatter": "biomejs.biome",
   "biome.enabled": true,
   "deno.enable": true,
-  "deno.enablePaths": [
-    "./apps/api/"
-  ]
+  "deno.enablePaths": ["./apps/api/"]
 }

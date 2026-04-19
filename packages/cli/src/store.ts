@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { getRepoRoot } from './git.ts';
 
 export interface BranchMeta {
@@ -45,7 +45,7 @@ export function load(): LyStore {
 export function save(store: LyStore): void {
   const path = getStorePath();
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(store, null, 2) + '\n', 'utf8');
+  writeFileSync(path, `${JSON.stringify(store, null, 2)}\n`, 'utf8');
 }
 
 export function init(trunk: string): LyStore {

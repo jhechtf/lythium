@@ -6,10 +6,11 @@
   };
 </script>
 <script lang="ts">
-  import { fly } from 'svelte/transition';
   import { XIcon } from 'lucide-svelte';
-  import { toasts } from './toastState.svelte';
 	import { onMount } from "svelte";
+  import { fly } from 'svelte/transition';
+  import { toasts } from './toastState.svelte';
+
   let { toast }: ToastInternalProps = $props();
 
   onMount(() => {

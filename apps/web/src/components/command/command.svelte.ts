@@ -1,6 +1,6 @@
-import { SvelteMap } from 'svelte/reactivity';
-import type { Component } from 'svelte';
 import type { IconProps } from 'lucide-svelte';
+import type { Component } from 'svelte';
+import { SvelteMap } from 'svelte/reactivity';
 
 export type GroupDescriptor = {
   name: string;
@@ -26,7 +26,7 @@ class CommandRegistry {
     return this.map.has(commandId);
   }
 
-  addToGroup(commandId: string, group: string) {
+  addToGroup(commandId: string, _group: string) {
     if (!this.has(commandId)) return;
   }
 }

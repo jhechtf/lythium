@@ -1,7 +1,7 @@
 <script lang="ts" module>
+  import type { DiffFile } from '@lythium/api/types';
   import { defineMeta } from '@storybook/addon-svelte-csf';
   import DiffViewer from './diffViewer.svelte';
-  import type { DiffFile } from '@lythium/api/types';
 
   const exampleFile: DiffFile = {
     filename: 'src/utils/format.ts',

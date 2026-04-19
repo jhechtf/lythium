@@ -14,7 +14,14 @@ export interface StackPR {
 
 export interface DiffFile {
   filename: string;
-  status: 'added' | 'removed' | 'modified' | 'renamed' | 'copied' | 'changed' | 'unchanged';
+  status:
+    | 'added'
+    | 'removed'
+    | 'modified'
+    | 'renamed'
+    | 'copied'
+    | 'changed'
+    | 'unchanged';
   additions: number;
   deletions: number;
   changes: number;

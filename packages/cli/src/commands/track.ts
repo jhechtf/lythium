@@ -1,15 +1,15 @@
+import { cancel, isCancel, outro, select } from '@clack/prompts';
 import { program } from 'commander';
-import { outro, select, isCancel, cancel } from '@clack/prompts';
 import pc from 'picocolors';
-import { currentBranch, listLocalBranches } from '../git.ts';
-import { load, save, LyError } from '../store.ts';
+import { currentBranch } from '../git.ts';
+import { LyError, type LyStore, load, save } from '../store.ts';
 
 program
   .command('track')
   .description('Start tracking an existing branch in the stack')
   .argument('[branch]', 'branch to track (default: current)')
   .action(async (branchArg: string | undefined) => {
-    let store;
+    let store: LyStore;
     try {
       store = load();
     } catch (e) {

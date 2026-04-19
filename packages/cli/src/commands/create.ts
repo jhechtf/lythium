@@ -1,15 +1,15 @@
+import { cancel, intro, isCancel, outro, text } from '@clack/prompts';
 import { program } from 'commander';
-import { intro, outro, text, isCancel, cancel } from '@clack/prompts';
 import pc from 'picocolors';
 import {
-  currentBranch,
-  createBranch,
-  stageAll,
-  hasStagedChanges,
   commit,
   commitEmpty,
+  createBranch,
+  currentBranch,
+  hasStagedChanges,
+  stageAll,
 } from '../git.ts';
-import { load, save, LyError } from '../store.ts';
+import { LyError, type LyStore, load, save } from '../store.ts';
 
 program
   .command('create')
@@ -24,7 +24,7 @@ program
     ) => {
       intro(pc.bold('ly create'));
 
-      let store;
+      let store: LyStore;
       try {
         store = load();
       } catch (e) {

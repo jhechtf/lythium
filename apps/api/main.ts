@@ -1,6 +1,36 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import type { StackDiffResponse, StackItem, StackPR } from './types.ts';
+import type {
+  DiffFile,
+  StackDiffResponse,
+  StackItem,
+  StackPR,
+} from './types.ts';
+
+interface GithubPR {
+  number: number;
+  title: string;
+  html_url: string;
+  head: { ref: string; sha: string; label: string };
+  base: { ref: string; sha: string; label: string };
+}
+
+interface GithubFile {
+  filename: string;
+  status: DiffFile['status'];
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch?: string;
+  previous_filename?: string;
+}
+
+interface GithubCompare {
+  ahead_by: number;
+  behind_by: number;
+  total_commits: number;
+  files?: GithubFile[];
+}
 
 const MAX_STACK_DEPTH = 20;
 
@@ -19,7 +49,7 @@ async function githubFetch(path: string, token: string) {
   return { ok: res.ok, status: res.status, data, headers: res.headers };
 }
 
-function shapePR(pr: any): StackPR {
+function shapePR(pr: GithubPR): StackPR {
   return {
     number: pr.number,
     title: pr.title,
@@ -41,10 +71,15 @@ const app = new Hono()
     const { owner, repo, pr_number } = c.req.param();
 
     // Fetch the starting PR
-    const startResult = await githubFetch(`/repos/${owner}/${repo}/pulls/${pr_number}`, token);
+    const startResult = await githubFetch(
+      `/repos/${owner}/${repo}/pulls/${pr_number}`,
+      token,
+    );
     if (!startResult.ok) {
-      if (startResult.status === 401) return c.json({ error: 'GitHub authentication failed' }, 401);
-      if (startResult.status === 404) return c.json({ error: `PR #${pr_number} not found` }, 404);
+      if (startResult.status === 401)
+        return c.json({ error: 'GitHub authentication failed' }, 401);
+      if (startResult.status === 404)
+        return c.json({ error: `PR #${pr_number} not found` }, 404);
       if (startResult.status === 403 || startResult.status === 429) {
         const retryAfter = startResult.headers.get('Retry-After');
         return c.json({ error: 'GitHub rate limit exceeded', retryAfter }, 429);
@@ -53,8 +88,8 @@ const app = new Hono()
     }
 
     // Walk UP the stack: follow base.ref to find parent PRs
-    const prs: any[] = [startResult.data];
-    let current = startResult.data;
+    const prs: GithubPR[] = [startResult.data as GithubPR];
+    let current = startResult.data as GithubPR;
 
     for (let i = 0; i < MAX_STACK_DEPTH - 1; i++) {
       const parentBranch = current.base.ref;
@@ -62,10 +97,14 @@ const app = new Hono()
         `/repos/${owner}/${repo}/pulls?head=${encodeURIComponent(owner)}:${encodeURIComponent(parentBranch)}&state=open`,
         token,
       );
-      if (!searchResult.ok || !Array.isArray(searchResult.data) || searchResult.data.length === 0) {
+      if (
+        !searchResult.ok ||
+        !Array.isArray(searchResult.data) ||
+        searchResult.data.length === 0
+      ) {
         break; // no parent PR found — we're at the bottom of the stack
       }
-      const parentPR = searchResult.data[0];
+      const parentPR = (searchResult.data as GithubPR[])[0];
       prs.unshift(parentPR); // prepend so array stays bottom-to-top
       current = parentPR;
     }
@@ -81,12 +120,15 @@ const app = new Hono()
       if (!compareResult.ok) {
         stack.push({
           pr: shapePR(pr),
-          diff: { stats: { ahead_by: 0, behind_by: 0, total_commits: 0 }, files: [] },
+          diff: {
+            stats: { ahead_by: 0, behind_by: 0, total_commits: 0 },
+            files: [],
+          },
         });
         continue;
       }
 
-      const cmp = compareResult.data;
+      const cmp = compareResult.data as GithubCompare;
       stack.push({
         pr: shapePR(pr),
         diff: {
@@ -95,7 +137,7 @@ const app = new Hono()
             behind_by: cmp.behind_by,
             total_commits: cmp.total_commits,
           },
-          files: (cmp.files ?? []).map((f: any) => ({
+          files: (cmp.files ?? []).map((f) => ({
             filename: f.filename,
             status: f.status,
             additions: f.additions,

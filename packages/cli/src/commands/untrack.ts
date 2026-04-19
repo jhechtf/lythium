@@ -1,16 +1,16 @@
-import { program } from 'commander';
 import { outro } from '@clack/prompts';
+import { program } from 'commander';
 import pc from 'picocolors';
 import { currentBranch } from '../git.ts';
-import { load, save, LyError } from '../store.ts';
 import { getChildren } from '../stack.ts';
+import { LyError, type LyStore, load, save } from '../store.ts';
 
 program
   .command('untrack')
   .description('Stop tracking a branch in the stack')
   .argument('[branch]', 'branch to untrack (default: current)')
   .action((branchArg: string | undefined) => {
-    let store;
+    let store: LyStore;
     try {
       store = load();
     } catch (e) {

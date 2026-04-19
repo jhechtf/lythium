@@ -9,7 +9,7 @@ const { Story } = defineMeta({ component: Input });
 
 <Story name="With label">
   {#snippet template(args)}
-    <Input placeholder="Placeholder" type="search" autofocus {...args}>
+    <Input placeholder="Placeholder" type="search" {...args}>
       Search
     </Input>
   {/snippet}

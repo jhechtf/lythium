@@ -1,9 +1,9 @@
 <script lang="ts">
 import '../app.css';
-import favicon from '$lib/assets/favicon.svg';
-import Rail from '../components/rail/rail.svelte';
-import Command from '../components/command/command.svelte';
 import ToastPortal from '$components/toast/toastPortal.svelte';
+import favicon from '$lib/assets/favicon.svg';
+import Command from '../components/command/command.svelte';
+import Rail from '../components/rail/rail.svelte';
 
 let { children } = $props();
 </script>
