@@ -1,5 +1,8 @@
 {
   "permissions": {
-    "allow": ["Bash(pnpm biome *)"]
+    "allow": [
+      "Bash(pnpm biome *)",
+      "mcp__plugin_linear_linear__save_issue"
+    ]
   }
 }

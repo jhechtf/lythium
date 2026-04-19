@@ -12,6 +12,7 @@
   "scripts": {
     "build": "tsdown src/index.ts --format esm --target node20 --out-dir dist",
     "start": "node ./dist/cli.js",
+    "pretest": "pnpm run build",
     "test": "vitest run",
     "test:watch": "vitest"
   },
