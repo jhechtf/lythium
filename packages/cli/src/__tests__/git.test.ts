@@ -1,5 +1,4 @@
-import { execSync } from 'node:child_process';
-import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   currentBranch,
   GitError,
@@ -9,11 +8,11 @@ import {
   parseOwnerRepo,
 } from '../git.ts';
 
-vi.mock('node:child_process');
+const { mockExecSync } = vi.hoisted(() => ({
+  mockExecSync: vi.fn<() => string>(),
+}));
 
-// git.ts always calls execSync with encoding:'utf8', so it returns string, not Buffer.
-// The overloaded execSync type can't be directly narrowed without going through unknown.
-const mockExecSync = vi.mocked(execSync) as unknown as MockInstance<() => string>;
+vi.mock('node:child_process', () => ({ execSync: mockExecSync }));
 
 beforeEach(() => {
   mockExecSync.mockReset();
