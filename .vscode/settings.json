@@ -1,8 +1,14 @@
 {
   "lnf.aliases": {
     "$/": "${workspaceRoot}/",
-    "$components/": "${workspaceRoot}/src/components/"
+    "$components/": "${workspaceRoot}/src/components/",
+    "@*/": "${workspaceRoot}/apps/$1/",
+    "$*/": "${workspaceRoot}/packages/$1/"
   },
   "editor.defaultFormatter": "biomejs.biome",
-  "biome.enabled": true
+  "biome.enabled": true,
+  "deno.enable": true,
+  "deno.enablePaths": [
+    "./apps/api/"
+  ]
 }
