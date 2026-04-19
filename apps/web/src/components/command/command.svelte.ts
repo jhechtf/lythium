@@ -1,6 +1,6 @@
 import { SvelteMap } from 'svelte/reactivity';
 import type { Component } from 'svelte';
-import { type IconProps } from 'lucide-svelte';
+import type { IconProps } from 'lucide-svelte';
 
 export type GroupDescriptor = {
   name: string;

@@ -110,6 +110,11 @@ program
       // for each branch so we can compose the final body in phase 2.
       const baseBodies = new Map<string, string>();
 
+    // Phase 1: push + create/update all PRs so every PR number is known before
+    // we build stack sections. Track the base body (user content, no stack section)
+    // for each branch so we can compose the final body in phase 2.
+    const baseBodies = new Map<string, string>();
+
       for (const b of branches) {
         const meta = store.branches[b];
         const base = meta.parent;
@@ -140,97 +145,73 @@ program
           process.exit(1);
         }
 
-        if (existing!.length > 0) {
-          // Update existing PR
-          const pr = existing![0];
-          try {
-            await githubRequest(
-              'PATCH',
-              `/repos/${owner}/${repo}/pulls/${pr.number}`,
-              token,
-              {
-                base,
-                ...(opts.title && branches.length === 1
-                  ? { title: opts.title }
-                  : {}),
-              },
-            );
-          } catch (e: any) {
-            console.error(
-              pc.red(
-                `  Failed to update PR #${pr.number} for ${pc.bold(b)}: ${e.message}`,
-              ),
-            );
-            process.exit(1);
-          }
-          meta.prNumber = pr.number;
-          meta.prUrl = pr.html_url;
-          // Strip any old stack section so phase 2 can rewrite it cleanly
-          baseBodies.set(b, stripStackSection(opts.body ?? pr.body ?? ''));
-          console.log(pc.dim(`  updated PR #${pr.number}: ${pr.html_url}`));
-        } else {
-          // Create new PR
-          const title = opts.title && branches.length === 1 ? opts.title : b;
-          let created: any;
-          try {
-            created = await githubRequest(
-              'POST',
-              `/repos/${owner}/${repo}/pulls`,
-              token,
-              {
-                title,
-                head: b,
-                base,
-                body: opts.body ?? '',
-                draft: opts.draft ?? false,
-              },
-            );
-          } catch (e: any) {
-            console.error(
-              pc.red(`  Failed to create PR for ${pc.bold(b)}: ${e.message}`),
-            );
-            process.exit(1);
-          }
-          meta.prNumber = created.number;
-          meta.prUrl = created.html_url;
-          baseBodies.set(b, opts.body ?? '');
-          console.log(
-            pc.green(`  created PR #${created.number}: ${created.html_url}`),
-          );
-        }
-
-        save(store);
-      }
-
-      // Phase 2: now that all PR numbers are known, update each PR body with the
-      // stack section so every PR in the batch links to the others.
-      console.log(pc.dim('  updating stack sections...'));
-      for (const b of branches) {
-        const meta = store.branches[b];
-        if (!meta.prNumber) continue;
-
-        const base = baseBodies.get(b) ?? '';
-        const section = buildStackSection(store, b);
-        const fullBody = base ? `${base}\n\n${section}` : section;
-
+      if (existing!.length > 0) {
+        // Update existing PR
+        const pr = existing![0];
         try {
-          await githubRequest(
-            'PATCH',
-            `/repos/${owner}/${repo}/pulls/${meta.prNumber}`,
+          await githubRequest('PATCH', `/repos/${owner}/${repo}/pulls/${pr.number}`, token, {
+            base,
+            ...(opts.title && branches.length === 1 ? { title: opts.title } : {}),
+          });
+        } catch (e: any) {
+          console.error(pc.red(`  Failed to update PR #${pr.number} for ${pc.bold(b)}: ${e.message}`));
+          process.exit(1);
+        }
+        meta.prNumber = pr.number;
+        meta.prUrl = pr.html_url;
+        // Strip any old stack section so phase 2 can rewrite it cleanly
+        baseBodies.set(b, stripStackSection(opts.body ?? pr.body ?? ''));
+        console.log(pc.dim(`  updated PR #${pr.number}: ${pr.html_url}`));
+      } else {
+        // Create new PR
+        const title = (opts.title && branches.length === 1) ? opts.title : b;
+        let created: any;
+        try {
+          created = await githubRequest(
+            'POST',
+            `/repos/${owner}/${repo}/pulls`,
             token,
             {
-              body: fullBody,
+              title,
+              head: b,
+              base,
+              body: opts.body ?? '',
+              draft: opts.draft ?? false,
             },
           );
         } catch (e: any) {
-          // Non-fatal — the PR exists and is correct, only the stack section failed
-          console.error(
-            pc.yellow(
-              `  Warning: could not update stack section on #${meta.prNumber}: ${e.message}`,
-            ),
-          );
+          console.error(pc.red(`  Failed to create PR for ${pc.bold(b)}: ${e.message}`));
+          process.exit(1);
         }
+        meta.prNumber = created.number;
+        meta.prUrl = created.html_url;
+        baseBodies.set(b, opts.body ?? '');
+        console.log(pc.green(`  created PR #${created.number}: ${created.html_url}`));
       }
+
+      save(store);
+    }
+
+    // Phase 2: now that all PR numbers are known, update each PR body with the
+    // stack section so every PR in the batch links to the others.
+    console.log(pc.dim('  updating stack sections...'));
+    for (const b of branches) {
+      const meta = store.branches[b];
+      if (!meta.prNumber) continue;
+
+      const base = baseBodies.get(b) ?? '';
+      const section = buildStackSection(store, b);
+      const fullBody = base ? `${base}\n\n${section}` : section;
+
+      try {
+        await githubRequest('PATCH', `/repos/${owner}/${repo}/pulls/${meta.prNumber}`, token, {
+          body: fullBody,
+        });
+      } catch (e: any) {
+        // Non-fatal — the PR exists and is correct, only the stack section failed
+        console.error(pc.yellow(`  Warning: could not update stack section on #${meta.prNumber}: ${e.message}`));
+      }
+    }
 
       outro(pc.green(`Submitted ${branches.length} branch(es)`));
     },

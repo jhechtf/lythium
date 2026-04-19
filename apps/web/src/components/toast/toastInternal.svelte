@@ -29,7 +29,7 @@
   {#if toast.dismissAfter}
     <div class="h-4 border rounded-t-2xl bg-blue-500" style:transition={`translate ${toast.dismissAfter}s linear`}></div>
   {/if}
-  <button class="hover sm" onclick={() => toasts.delete(toast)}>
+  <button type="button" class="hover sm" onclick={() => toasts.delete(toast)}>
     <XIcon size="1em"/>
   </button>
 

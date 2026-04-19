@@ -1,9 +1,9 @@
 <script lang="ts">
 import {
 	CircleUserRoundIcon,
-	SettingsIcon,
 	InboxIcon,
 	MessageSquareDiffIcon,
+	SettingsIcon,
 } from 'lucide-svelte';
 import Stack from '../stack/stack.svelte';
 </script>
@@ -11,9 +11,11 @@ import Stack from '../stack/stack.svelte';
 	<div class="top">
     <Stack direction="column" gap="md">
       <a class="no" href="/">
+        <div class="sr-only">User Profile</div>
         <CircleUserRoundIcon aria-details="User details" width="100%" />
       </a>
       <a href="/inbox">
+        <div class="sr-only">Inbox</div>
         <InboxIcon aria-details="Inbox" width="100%" />
       </a>
       <MessageSquareDiffIcon aria-details="User details" width="100%" />
@@ -26,6 +28,7 @@ import Stack from '../stack/stack.svelte';
     <Stack direction="column" gap="md">
       <hr />
       <a href="/settings">
+        <span class="sr-only">Settings</span>
         <SettingsIcon aria-details="Settings" width="100%"/>
       </a>
     </Stack>
@@ -33,6 +36,7 @@ import Stack from '../stack/stack.svelte';
 </div>
 
 <style>
+  @reference '#app.css';
 
   hr {
     color: rgb(from currentColor r g b / 0.3);
@@ -47,14 +51,14 @@ import Stack from '../stack/stack.svelte';
 		background-color: var(--color-zinc-800);
 		max-width: 48px;
 		margin: 0;
-		gap: calc(var(--spacing) * 4);
+		gap: --spacing(4);
     & > * {
+      padding: --spacing(3);
       &:first-child {
-        padding-top: calc(var(--spacing) * 5);
+        padding-top: --spacing(5);
       }
-      padding: calc(var(--spacing) * 3);
       &:last-child {
-        padding-bottom: calc(var(--spacing) * 4);
+        padding-bottom: --spacing(4);
       }
     }
 

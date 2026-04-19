@@ -77,10 +77,7 @@ export function buildStackSection(store: LyStore, branch: string): string {
 /** Strip a previously embedded stack section from a PR body. */
 export function stripStackSection(body: string): string {
   return body
-    .replace(
-      new RegExp(`\\n*${STACK_START}[\\s\\S]*?${STACK_END}\\n*`, 'g'),
-      '',
-    )
+    .replace(new RegExp(`\\n*${STACK_START}[\\s\\S]*?${STACK_END}\\n*`, 'g'), '')
     .trimEnd();
 }
 
