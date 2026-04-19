@@ -68,7 +68,9 @@ export function currentBranch(): string {
 }
 
 export function listLocalBranches(): string[] {
-  const out = git('branch --format=%(refname:short)');
+  // execFile (no shell): the `%(refname:short)` format string contains parens
+  // that POSIX shells like dash choke on when this runs through `sh -c`.
+  const out = gitArgs(['branch', '--format=%(refname:short)']);
   return out.split('\n').filter(Boolean);
 }
 
