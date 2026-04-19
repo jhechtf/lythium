@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   currentBranch,
   GitError,
@@ -11,9 +11,7 @@ import {
 
 vi.mock('node:child_process');
 
-// git.ts always calls execSync with encoding:'utf8', so it returns string, not Buffer.
-// The overloaded execSync type can't be directly narrowed without going through unknown.
-const mockExecSync = vi.mocked(execSync) as unknown as MockInstance<() => string>;
+const mockExecSync = vi.mocked(execSync);
 
 beforeEach(() => {
   mockExecSync.mockReset();
@@ -73,7 +71,7 @@ describe('GitError', () => {
 
 describe('isGitRepo', () => {
   it('returns true when git rev-parse succeeds', () => {
-    mockExecSync.mockReturnValue('.git\n');
+    mockExecSync.mockReturnValue('.git\n' as unknown as Buffer);
     expect(isGitRepo()).toBe(true);
   });
 
@@ -89,7 +87,7 @@ describe('isGitRepo', () => {
 
 describe('currentBranch', () => {
   it('returns the trimmed branch name', () => {
-    mockExecSync.mockReturnValue('main\n');
+    mockExecSync.mockReturnValue('main\n' as unknown as Buffer);
     expect(currentBranch()).toBe('main');
   });
 });
@@ -98,12 +96,12 @@ describe('currentBranch', () => {
 
 describe('listLocalBranches', () => {
   it('splits output into branch names', () => {
-    mockExecSync.mockReturnValue('main\nfeat_a\nfeat_b\n');
+    mockExecSync.mockReturnValue('main\nfeat_a\nfeat_b\n' as unknown as Buffer);
     expect(listLocalBranches()).toEqual(['main', 'feat_a', 'feat_b']);
   });
 
   it('filters empty lines', () => {
-    mockExecSync.mockReturnValue('main\n\nfeat_a\n');
+    mockExecSync.mockReturnValue('main\n\nfeat_a\n' as unknown as Buffer);
     expect(listLocalBranches()).toEqual(['main', 'feat_a']);
   });
 });
@@ -112,7 +110,7 @@ describe('listLocalBranches', () => {
 
 describe('isMergedInto', () => {
   it('returns true when merge-base exits 0', () => {
-    mockExecSync.mockReturnValue('');
+    mockExecSync.mockReturnValue('' as unknown as Buffer);
     expect(isMergedInto('feat_a', 'main')).toBe(true);
   });
 
