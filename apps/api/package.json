@@ -1,13 +1,22 @@
 {
   "name": "@lythium/api",
-  "dependencies": {
-    "hono": "^4.11.10"
-  },
+  "type": "module",
   "exports": {
     ".": "./main.ts",
     "./types": "./types.ts"
   },
   "scripts": {
-    "dev": "deno run --watch -N main.ts"
+    "dev": "tsx watch main.ts",
+    "build": "tsdown main.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "hono": "^4.11.10"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsdown": "^0.12.5",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
   }
 }
