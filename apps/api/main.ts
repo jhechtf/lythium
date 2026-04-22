@@ -1,3 +1,4 @@
+import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type {
@@ -155,6 +156,6 @@ const app = new Hono()
 
 export type AppType = typeof app;
 
-if (Deno.mainModule === import.meta.url) {
-  Deno.serve(app.fetch);
-}
+const port = Number(process.env.PORT ?? 3000);
+console.log(`API server listening on :${port}`);
+serve({ fetch: app.fetch, port });
