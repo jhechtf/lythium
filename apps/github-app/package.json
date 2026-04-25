@@ -1,0 +1,23 @@
+{
+  "name": "@lythium/github-app",
+  "type": "module",
+  "scripts": {
+    "dev": "node main.ts",
+    "build": "tsdown main.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@lythium/db": "workspace:*",
+    "@octokit/app": "^15.1.1",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.41.0",
+    "hono": "^4.11.10"
+  },
+  "devDependencies": {
+    "@octokit/webhooks": "^14.2.0",
+    "@types/node": "^24.0.0",
+    "tsdown": "^0.12.5",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
