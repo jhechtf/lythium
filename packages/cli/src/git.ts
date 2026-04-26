@@ -145,6 +145,10 @@ export function deleteBranch(branch: string, force = false): void {
   git(`branch ${force ? '-D' : '-d'} ${branch}`);
 }
 
+export function trackRemoteBranch(branch: string): void {
+  git(`branch --track ${branch} origin/${branch}`);
+}
+
 export function getRemoteUrl(): string {
   return git('remote get-url origin');
 }
