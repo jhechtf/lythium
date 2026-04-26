@@ -41,8 +41,8 @@ export function getStack(store: LyStore, branch: string): string[] {
 
 // ─── PR body stack section ───────────────────────────────────────────────────
 
-const STACK_START = '<!-- lythium-stack-start -->';
-const STACK_END = '<!-- lythium-stack-end -->';
+export const STACK_START = '<!-- lythium-stack-start -->';
+export const STACK_END = '<!-- lythium-stack-end -->';
 
 function formatBranchEntry(store: LyStore, b: string): string {
   const meta = store.branches[b];

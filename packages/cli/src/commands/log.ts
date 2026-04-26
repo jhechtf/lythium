@@ -5,7 +5,7 @@ import { renderShortStack, renderTree } from '../stack.ts';
 import { LyError, type LyStore, load } from '../store.ts';
 
 program
-  .command('log')
+  .command('log', { isDefault: true })
   .description('Show the stack tree')
   .option('-s, --short', 'show only the current stack lineage')
   .action((opts: { short?: boolean }) => {
