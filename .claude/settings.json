@@ -1,5 +1,15 @@
 {
   "permissions": {
-    "allow": ["Bash(pnpm biome *)"]
+    "allow": [
+      "Bash(pnpm biome *)",
+      "mcp__plugin_linear_linear__get_issue",
+      "mcp__plugin_linear_linear__save_issue",
+      "mcp__plugin_linear_linear__list_issues",
+      "Read(//c/c/Users/Jim/projects/lythium/packages/cli/dist/**)",
+      "Bash(ly log *)",
+      "Bash(ly create *)",
+      "Bash(pnpm --filter @lythium/cli install)",
+      "Bash(pnpm --filter @lythium/cli test)"
+    ]
   }
 }
