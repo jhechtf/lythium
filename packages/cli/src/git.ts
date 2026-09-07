@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 
 export class GitError extends Error {
   constructor(message: string) {
@@ -13,6 +13,11 @@ export function setDebug(value: boolean): void {
   debugMode = value;
 }
 
+function wrapGitError(e: unknown): never {
+  const err = e as { stderr?: Buffer; message: string };
+  throw new GitError(err.stderr?.toString().trim() || err.message);
+}
+
 function git(cmd: string): string {
   if (debugMode) {
     process.stderr.write(`[git] git ${cmd}\n`);
@@ -23,8 +28,25 @@ function git(cmd: string): string {
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
   } catch (e) {
-    const err = e as { stderr?: Buffer; message: string };
-    throw new GitError(err.stderr?.toString().trim() || err.message);
+    wrapGitError(e);
+  }
+}
+
+/**
+ * Run git with an explicit argument array, avoiding shell interpolation.
+ * Use this whenever an argument is not a trusted, validated git ref.
+ */
+function gitArgs(args: string[]): string {
+  if (debugMode) {
+    process.stderr.write(`[git] git ${args.join(' ')}\n`);
+  }
+  try {
+    return execFileSync('git', args, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+  } catch (e) {
+    wrapGitError(e);
   }
 }
 
@@ -138,11 +160,11 @@ export function fetch(): void {
  */
 export function updateTrunk(trunk: string): void {
   if (currentBranch() === trunk) {
-    git(`merge --ff-only origin/${trunk}`);
+    gitArgs(['merge', '--ff-only', `origin/${trunk}`]);
   } else {
     // Only fast-forward: refuse to move trunk backward over local-only commits.
-    git(`merge-base --is-ancestor ${trunk} origin/${trunk}`);
-    git(`branch -f ${trunk} origin/${trunk}`);
+    gitArgs(['merge-base', '--is-ancestor', trunk, `origin/${trunk}`]);
+    gitArgs(['branch', '-f', trunk, `origin/${trunk}`]);
   }
 }
 
