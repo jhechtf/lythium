@@ -140,6 +140,8 @@ export function updateTrunk(trunk: string): void {
   if (currentBranch() === trunk) {
     git(`merge --ff-only origin/${trunk}`);
   } else {
+    // Only fast-forward: refuse to move trunk backward over local-only commits.
+    git(`merge-base --is-ancestor ${trunk} origin/${trunk}`);
     git(`branch -f ${trunk} origin/${trunk}`);
   }
 }

@@ -333,8 +333,11 @@ program
         }
         try {
           deleteBranch(b, true);
-        } catch {
-          // May already be gone remotely, ignore
+        } catch (e) {
+          // Tolerate an already-absent branch; re-throw anything else (e.g. the
+          // branch is checked out in another worktree) so we don't drop metadata
+          // for a branch that still exists locally.
+          if (listLocalBranches().includes(b)) throw e;
         }
         delete store.branches[b];
         console.log(pc.green(`  Deleted ${b}`));
