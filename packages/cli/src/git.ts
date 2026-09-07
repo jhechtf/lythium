@@ -129,7 +129,19 @@ export function push(branch: string, force = false): void {
 }
 
 export function fetch(): void {
-  git('fetch origin');
+  git('fetch origin --prune');
+}
+
+/**
+ * Fast-forward the local trunk branch to match `origin/<trunk>`.
+ * Works whether or not trunk is the currently checked-out branch.
+ */
+export function updateTrunk(trunk: string): void {
+  if (currentBranch() === trunk) {
+    git(`merge --ff-only origin/${trunk}`);
+  } else {
+    git(`branch -f ${trunk} origin/${trunk}`);
+  }
 }
 
 export function isMergedInto(branch: string, target: string): boolean {
