@@ -14,6 +14,7 @@ import {
   listLocalBranches,
   parseOwnerRepo,
   trackRemoteBranch,
+  updateTrunk,
 } from '../git.ts';
 import { getAllDescendants, STACK_END, STACK_START } from '../stack.ts';
 import {
@@ -262,6 +263,28 @@ program
       }
     }
 
+    // Bring the local trunk up to date so restacks target the new base
+    process.stdout.write(pc.dim(`Updating ${store.trunk}... `));
+    try {
+      updateTrunk(store.trunk);
+      process.stdout.write(pc.green('✓\n'));
+    } catch (e) {
+      process.stdout.write(pc.yellow('skipped\n'));
+      console.warn(
+        pc.yellow(
+          `Could not fast-forward ${store.trunk}: ${(e as Error).message}`,
+        ),
+      );
+      // A stale trunk would make the restack below target an outdated base,
+      // leaving the stack inconsistent. Bail out before mutating anything.
+      console.error(
+        pc.red(
+          `Aborting sync: update ${store.trunk} manually and re-run \`ly sync\`.`,
+        ),
+      );
+      process.exit(1);
+    }
+
     // Detect merged branches
     const trackedBranches = Object.keys(store.branches);
     const merged = trackedBranches.filter((b) => {
@@ -274,49 +297,70 @@ program
 
     const origin = currentBranch();
 
+    // Branches that are merged but the user chooses to keep — excluded from the
+    // restack below so we don't rebase them into an empty no-op.
+    const mergedKept = new Set<string>();
+
     if (merged.length > 0) {
       console.log(pc.dim(`\nFound ${merged.length} merged branch(es):`));
       for (const b of merged) console.log(pc.dim(`  ${b}`));
 
       const toDelete = await multiselect({
-        message: 'Select branches to delete:',
+        message: 'Delete these merged branches? (all selected by default)',
         options: merged.map((b) => ({
           value: b,
           label: b,
           hint: `merged into ${store.trunk}`,
         })),
+        initialValues: merged,
         required: false,
       });
 
-      if (!isCancel(toDelete)) {
-        for (const b of toDelete as string[]) {
-          const meta = store.branches[b];
-          const children = Object.entries(store.branches).filter(
-            ([, m]) => m.parent === b,
-          );
-          for (const [child, childMeta] of children) {
-            childMeta.parent = meta.parent;
-            console.log(pc.dim(`  Reparenting ${child} → ${meta.parent}`));
-          }
+      const selected = isCancel(toDelete) ? [] : (toDelete as string[]);
 
-          if (currentBranch() === b) {
-            checkout(meta.parent);
-          }
-          try {
-            deleteBranch(b, true);
-          } catch {
-            // May already be gone remotely, ignore
-          }
-          delete store.branches[b];
-          console.log(pc.green(`  Deleted ${b}`));
+      for (const b of selected) {
+        const meta = store.branches[b];
+        const children = Object.entries(store.branches).filter(
+          ([, m]) => m.parent === b,
+        );
+        for (const [child, childMeta] of children) {
+          childMeta.parent = meta.parent;
+          console.log(pc.dim(`  Reparenting ${child} → ${meta.parent}`));
+        }
+
+        if (currentBranch() === b) {
+          checkout(meta.parent);
+        }
+        try {
+          deleteBranch(b, true);
+        } catch (e) {
+          // Tolerate an already-absent branch; re-throw anything else (e.g. the
+          // branch is checked out in another worktree) so we don't drop metadata
+          // for a branch that still exists locally.
+          if (listLocalBranches().includes(b)) throw e;
+        }
+        delete store.branches[b];
+        console.log(pc.green(`  Deleted ${b}`));
+      }
+
+      for (const b of merged) {
+        if (store.branches[b]) {
+          mergedKept.add(b);
+          console.log(
+            pc.yellow(
+              `  ${b} is fully merged into ${store.trunk} — kept, skipping its rebase`,
+            ),
+          );
         }
       }
     } else {
       console.log(pc.dim('No merged branches found.'));
     }
 
-    // Restack remaining branches
-    const toRestack = getAllDescendants(store, store.trunk);
+    // Restack remaining branches onto their (now up-to-date) parents
+    const toRestack = getAllDescendants(store, store.trunk).filter(
+      (b) => !mergedKept.has(b),
+    );
     if (toRestack.length > 0) {
       console.log(pc.dim(`\nRestacking ${toRestack.length} branch(es)...`));
       for (const b of toRestack) {
@@ -324,8 +368,10 @@ program
         console.log(pc.dim(`  ${b} → ${parent}`));
         forceRebase(b, parent, origin);
       }
-      checkout(origin);
     }
+
+    // Return to where we started, or trunk if that branch was just deleted
+    checkout(listLocalBranches().includes(origin) ? origin : store.trunk);
 
     save(store);
     outro(pc.green('Sync complete'));
