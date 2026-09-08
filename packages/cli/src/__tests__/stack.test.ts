@@ -86,6 +86,13 @@ describe('getAllDescendants', () => {
     expect(descendants.indexOf('feat_a')).toBeLessThan(
       descendants.indexOf('feat_d'),
     );
+    // every direct child precedes every grandchild (breadth-first contract)
+    expect(descendants.indexOf('feat_b')).toBeLessThan(
+      descendants.indexOf('feat_c'),
+    );
+    expect(descendants.indexOf('feat_b')).toBeLessThan(
+      descendants.indexOf('feat_d'),
+    );
     expect(descendants).toHaveLength(4);
   });
 
