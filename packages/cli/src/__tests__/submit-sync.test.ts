@@ -2,6 +2,7 @@ import { execSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Conf from 'conf';
 import { describe, expect, it } from 'vitest';
 import { createTempRepo, createUninitializedRepo } from './helpers/repo.ts';
 
@@ -17,6 +18,28 @@ function isolatedEnv(dir: string): NodeJS.ProcessEnv {
     APPDATA: join(fakeHome, 'AppData', 'Roaming'),
     XDG_CONFIG_HOME: join(fakeHome, '.config'),
   };
+}
+
+// Write a fake GitHub token into the isolated Conf store the CLI will read.
+// Constructs Conf under the same env the CLI subprocess gets, so env-paths
+// resolves to the identical config file regardless of platform.
+function stubToken(env: NodeJS.ProcessEnv, token = 'gho_testtoken'): void {
+  const keys = ['HOME', 'USERPROFILE', 'APPDATA', 'XDG_CONFIG_HOME'] as const;
+  const saved = keys.map((k) => [k, process.env[k]] as const);
+  try {
+    for (const k of keys) {
+      if (env[k] !== undefined) process.env[k] = env[k] as string;
+    }
+    new Conf<{ githubToken?: string }>({ projectName: 'lythium' }).set(
+      'githubToken',
+      token,
+    );
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 }
 
 // ─── ly submit — error cases ─────────────────────────────────────────────────
@@ -38,11 +61,16 @@ describe('ly submit', () => {
 
   it('exits 1 when on trunk branch', () => {
     const { dir, ly, git } = createTempRepo();
+    const env = isolatedEnv(dir);
+    // Authenticate and give submit a parseable GitHub remote so execution
+    // gets past the auth / remote-URL checks and reaches the trunk guard.
+    stubToken(env);
+    git('remote add origin https://github.com/acme/demo.git');
     // Ensure we are on the trunk branch (main)
     expect(git('branch --show-current')).toBe('main');
-    const result = ly(['submit'], undefined, isolatedEnv(dir));
-    // Exits 1 for "not logged in" before it checks the trunk — still non-zero
+    const result = ly(['submit'], undefined, env);
     expect(result.status).toBe(1);
+    expect(result.stderr + result.stdout).toContain('Cannot submit trunk');
   });
 });
 
