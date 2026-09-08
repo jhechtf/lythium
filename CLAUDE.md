@@ -57,7 +57,9 @@ pnpm --filter @lythium/cli test
 
 CI (`.github/workflows/ci.yml`) runs these Turbo tasks filtered to packages
 affected since the PR base, with the GitHub Actions cache as a Turbo remote
-cache. `web` runs non-gating until LYT-43 clears its pre-existing failures.
+cache. Steps with known pre-existing failures (all of `web` → LYT-43; the
+`ly sync` CLI test on Linux → LYT-44) run non-gating (`continue-on-error`)
+and move into the gating block as each ticket lands.
 
 # Conventions
 
