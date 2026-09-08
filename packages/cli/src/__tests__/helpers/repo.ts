@@ -1,9 +1,13 @@
 import { execSync, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const CLI = resolve(import.meta.dirname, '../../../dist/index.mjs');
+const CLI = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../dist/index.mjs',
+);
 
 export interface RepoContext {
   dir: string;

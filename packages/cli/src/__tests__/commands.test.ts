@@ -14,6 +14,7 @@ describe('ly create', () => {
 
     expect(result.status).toBe(0);
     expect(git('branch --show-current')).toBe('feat/my-feature');
+    expect(git('log -1 --format=%s')).toBe('feat: my feature');
   });
 
   it('stacks the new branch on top of the current branch', () => {
