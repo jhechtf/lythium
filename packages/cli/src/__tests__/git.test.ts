@@ -1,4 +1,3 @@
-import { execSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   currentBranch,
@@ -9,9 +8,11 @@ import {
   parseOwnerRepo,
 } from '../git.ts';
 
-vi.mock('node:child_process');
+const { mockExecSync } = vi.hoisted(() => ({
+  mockExecSync: vi.fn<() => string>(),
+}));
 
-const mockExecSync = vi.mocked(execSync);
+vi.mock('node:child_process', () => ({ execSync: mockExecSync }));
 
 beforeEach(() => {
   mockExecSync.mockReset();
@@ -71,7 +72,7 @@ describe('GitError', () => {
 
 describe('isGitRepo', () => {
   it('returns true when git rev-parse succeeds', () => {
-    mockExecSync.mockReturnValue('.git\n' as unknown as Buffer);
+    mockExecSync.mockReturnValue('.git\n');
     expect(isGitRepo()).toBe(true);
   });
 
@@ -87,7 +88,7 @@ describe('isGitRepo', () => {
 
 describe('currentBranch', () => {
   it('returns the trimmed branch name', () => {
-    mockExecSync.mockReturnValue('main\n' as unknown as Buffer);
+    mockExecSync.mockReturnValue('main\n');
     expect(currentBranch()).toBe('main');
   });
 });
@@ -96,12 +97,12 @@ describe('currentBranch', () => {
 
 describe('listLocalBranches', () => {
   it('splits output into branch names', () => {
-    mockExecSync.mockReturnValue('main\nfeat_a\nfeat_b\n' as unknown as Buffer);
+    mockExecSync.mockReturnValue('main\nfeat_a\nfeat_b\n');
     expect(listLocalBranches()).toEqual(['main', 'feat_a', 'feat_b']);
   });
 
   it('filters empty lines', () => {
-    mockExecSync.mockReturnValue('main\n\nfeat_a\n' as unknown as Buffer);
+    mockExecSync.mockReturnValue('main\n\nfeat_a\n');
     expect(listLocalBranches()).toEqual(['main', 'feat_a']);
   });
 });
@@ -110,7 +111,7 @@ describe('listLocalBranches', () => {
 
 describe('isMergedInto', () => {
   it('returns true when merge-base exits 0', () => {
-    mockExecSync.mockReturnValue('' as unknown as Buffer);
+    mockExecSync.mockReturnValue('');
     expect(isMergedInto('feat_a', 'main')).toBe(true);
   });
 
