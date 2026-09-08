@@ -8,14 +8,19 @@ import {
   parseOwnerRepo,
 } from '../git.ts';
 
-const { mockExecSync } = vi.hoisted(() => ({
+const { mockExecSync, mockExecFileSync } = vi.hoisted(() => ({
   mockExecSync: vi.fn<() => string>(),
+  mockExecFileSync: vi.fn<() => string>(),
 }));
 
-vi.mock('node:child_process', () => ({ execSync: mockExecSync }));
+vi.mock('node:child_process', () => ({
+  execSync: mockExecSync,
+  execFileSync: mockExecFileSync,
+}));
 
 beforeEach(() => {
   mockExecSync.mockReset();
+  mockExecFileSync.mockReset();
 });
 
 afterEach(() => {
@@ -97,12 +102,12 @@ describe('currentBranch', () => {
 
 describe('listLocalBranches', () => {
   it('splits output into branch names', () => {
-    mockExecSync.mockReturnValue('main\nfeat_a\nfeat_b\n');
+    mockExecFileSync.mockReturnValue('main\nfeat_a\nfeat_b\n');
     expect(listLocalBranches()).toEqual(['main', 'feat_a', 'feat_b']);
   });
 
   it('filters empty lines', () => {
-    mockExecSync.mockReturnValue('main\n\nfeat_a\n');
+    mockExecFileSync.mockReturnValue('main\n\nfeat_a\n');
     expect(listLocalBranches()).toEqual(['main', 'feat_a']);
   });
 });

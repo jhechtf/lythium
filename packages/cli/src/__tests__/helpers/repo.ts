@@ -9,12 +9,15 @@ const CLI = resolve(
   '../../../dist/index.mjs',
 );
 
+export interface LyResult {
+  stdout: string;
+  stderr: string;
+  status: number | null;
+}
+
 export interface RepoContext {
   dir: string;
-  ly: (
-    args: string[],
-    input?: string,
-  ) => { stdout: string; stderr: string; status: number | null };
+  ly: (args: string[], input?: string, env?: NodeJS.ProcessEnv) => LyResult;
   git: (cmd: string) => string;
 }
 
@@ -37,12 +40,12 @@ function makeRepo(dir: string): RepoContext {
   git('commit --allow-empty -m "init"');
   git('branch -M main');
 
-  const ly = (args: string[], input?: string) => {
+  const ly = (args: string[], input?: string, env?: NodeJS.ProcessEnv) => {
     const result = spawnSync('node', [CLI, ...args], {
       cwd: dir,
       encoding: 'utf8',
       input,
-      env: { ...process.env, NO_COLOR: '1' },
+      env: env ?? { ...process.env, NO_COLOR: '1' },
     });
     return {
       stdout: result.stdout ?? '',
