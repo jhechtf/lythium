@@ -6,7 +6,8 @@ export default defineConfig({
   schema: './src/schema.ts',
 
   dbCredentials: {
-    url: process.env.DB_URL,
+    // biome-ignore lint/style/noNonNullAssertion: DB_URL is required at drizzle-kit runtime.
+    url: process.env.DB_URL!,
   },
 
   extensionsFilters: ['postgis'],

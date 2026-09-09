@@ -7,12 +7,17 @@ on:
     paths:
       - 'packages/db/drizzle/**'
 
+permissions:
+  contents: read
+
 jobs:
   migrate:
     name: Run migrations
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v5
 
@@ -25,6 +30,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run migrations
+        working-directory: packages/db
         run: node src/migrate.ts
         env:
           DB_URL: ${{ secrets.DB_URL }}

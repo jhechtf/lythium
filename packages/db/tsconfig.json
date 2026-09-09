@@ -4,8 +4,9 @@
     "module": "preserve",
     "moduleResolution": "bundler",
     "strict": true,
+    "skipLibCheck": true,
     "verbatimModuleSyntax": true,
-    "rootDir": "src",
+    "rootDir": ".",
     "outDir": "dist",
     "types": ["node"]
   },

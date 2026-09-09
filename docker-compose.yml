@@ -4,12 +4,12 @@ services:
     image: postgres:18-alpine
     environment:
       POSTGRES_USER: lythium
-      POSTGRES_DATABASE: lythium
+      POSTGRES_DB: lythium
       POSTGRES_PASSWORD: lythium
     ports:
-      - 5432:5432
+      - 127.0.0.1:5432:5432
     volumes:
       - pg-data:/var/lib/postgresql
-  
+
 volumes:
   pg-data:
