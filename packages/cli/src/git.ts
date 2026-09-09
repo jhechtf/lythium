@@ -97,7 +97,9 @@ export interface Worktree {
 
 /** Every worktree attached to this repo, parsed from `git worktree list --porcelain`. */
 export function listWorktrees(): Worktree[] {
-  const out = gitArgs(['worktree', 'list', '--porcelain']);
+  // `-z` NUL-delimits records/attributes so a worktree path containing a
+  // newline can't be split into a bogus entry.
+  const out = gitArgs(['worktree', 'list', '--porcelain', '-z']);
   const trees: Worktree[] = [];
   let current: Partial<Worktree> | null = null;
 
@@ -114,7 +116,7 @@ export function listWorktrees(): Worktree[] {
     current = null;
   };
 
-  for (const line of out.split('\n')) {
+  for (const line of out.split('\0')) {
     if (line.startsWith('worktree ')) {
       flush();
       current = { path: line.slice('worktree '.length) };

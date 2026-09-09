@@ -156,7 +156,7 @@ describe('listWorktrees', () => {
         'HEAD 789aaa',
         'detached',
         '',
-      ].join('\n'),
+      ].join('\0'),
     );
 
     expect(listWorktrees()).toEqual([
@@ -186,11 +186,26 @@ describe('listWorktrees', () => {
 
   it('returns a single record for a plain repo', () => {
     mockExecFileSync.mockReturnValue(
-      'worktree /repo\nHEAD abc123\nbranch refs/heads/main\n',
+      'worktree /repo\0HEAD abc123\0branch refs/heads/main\0\0',
     );
     expect(listWorktrees()).toEqual([
       {
         path: '/repo',
+        head: 'abc123',
+        branch: 'main',
+        bare: false,
+        detached: false,
+      },
+    ]);
+  });
+
+  it('keeps a worktree path that contains a newline intact', () => {
+    mockExecFileSync.mockReturnValue(
+      'worktree /repo/wt\nwith-newline\0HEAD abc123\0branch refs/heads/main\0\0',
+    );
+    expect(listWorktrees()).toEqual([
+      {
+        path: '/repo/wt\nwith-newline',
         head: 'abc123',
         branch: 'main',
         bare: false,
