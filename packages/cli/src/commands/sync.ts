@@ -24,6 +24,7 @@ import {
   load,
   save,
 } from '../store.ts';
+import { guardBranchesAvailable } from '../worktree.ts';
 
 // ─── Rebuild helpers ──────────────────────────────────────────────────────────
 
@@ -284,6 +285,11 @@ program
       );
       process.exit(1);
     }
+
+    // sync deletes, reparents, checks out and rebases tracked branches. If any
+    // of them is checked out in another worktree, none of that can proceed —
+    // fail now, before mutating anything.
+    guardBranchesAvailable(Object.keys(store.branches));
 
     // Detect merged branches
     const trackedBranches = Object.keys(store.branches);

@@ -63,6 +63,80 @@ export function getRepoRoot(): string {
   return git('rev-parse --show-toplevel');
 }
 
+/** True when the current git directory is a bare repository (no working tree). */
+export function isBareRepo(): boolean {
+  try {
+    return git('rev-parse --is-bare-repository') === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Absolute path to the *shared* git directory. For a linked worktree this is the
+ * main repo's `.git` (or the bare repo itself), not the worktree's private
+ * `.git/worktrees/<name>` directory — so state stored here is visible from every
+ * worktree attached to the same repo.
+ */
+export function gitCommonDir(): string {
+  return git('rev-parse --path-format=absolute --git-common-dir');
+}
+
+export interface Worktree {
+  /** Absolute path to the worktree's working directory. */
+  path: string;
+  /** Commit checked out here; absent for the bare entry. */
+  head?: string;
+  /** Short branch name checked out here; absent when detached or bare. */
+  branch?: string;
+  /** True for the repository's bare entry (it has no working tree). */
+  bare: boolean;
+  /** True when this worktree's HEAD is detached. */
+  detached: boolean;
+}
+
+/** Every worktree attached to this repo, parsed from `git worktree list --porcelain`. */
+export function listWorktrees(): Worktree[] {
+  const out = gitArgs(['worktree', 'list', '--porcelain']);
+  const trees: Worktree[] = [];
+  let current: Partial<Worktree> | null = null;
+
+  const flush = () => {
+    if (current?.path) {
+      trees.push({
+        path: current.path,
+        head: current.head,
+        branch: current.branch,
+        bare: current.bare ?? false,
+        detached: current.detached ?? false,
+      });
+    }
+    current = null;
+  };
+
+  for (const line of out.split('\n')) {
+    if (line.startsWith('worktree ')) {
+      flush();
+      current = { path: line.slice('worktree '.length) };
+    } else if (!current) {
+      // Attribute line with no preceding `worktree` line — ignore.
+    } else if (line === 'bare') {
+      current.bare = true;
+    } else if (line === 'detached') {
+      current.detached = true;
+    } else if (line.startsWith('HEAD ')) {
+      current.head = line.slice('HEAD '.length);
+    } else if (line.startsWith('branch ')) {
+      current.branch = line
+        .slice('branch '.length)
+        .replace(/^refs\/heads\//, '');
+    }
+  }
+  flush();
+
+  return trees;
+}
+
 export function currentBranch(): string {
   return git('rev-parse --abbrev-ref HEAD');
 }

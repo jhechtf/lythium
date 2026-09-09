@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { getRepoRoot } from './git.ts';
+import { gitCommonDir } from './git.ts';
 
 export interface BranchMeta {
   parent: string;
@@ -20,8 +20,15 @@ export class LyError extends Error {
   }
 }
 
+/**
+ * Location of the persistent store. Anchored to the *shared* git directory
+ * (`git rev-parse --git-common-dir`) rather than `<repoRoot>/.git`, so:
+ *   - a bare clone works (there is no `<repoRoot>/.git`), and
+ *   - every linked worktree sees the same stack metadata, instead of each
+ *     worktree trying to write into its own `.git` file and failing.
+ */
 export function getStorePath(): string {
-  return join(getRepoRoot(), '.git', 'ly', 'meta.json');
+  return join(gitCommonDir(), 'ly', 'meta.json');
 }
 
 export function isInitialized(): boolean {

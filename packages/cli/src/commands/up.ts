@@ -4,6 +4,7 @@ import pc from 'picocolors';
 import { checkout, currentBranch } from '../git.ts';
 import { getChildren } from '../stack.ts';
 import { LyError, type LyStore, load } from '../store.ts';
+import { guardBranchesAvailable } from '../worktree.ts';
 
 program
   .command('up')
@@ -44,6 +45,7 @@ program
       target = choice as string;
     }
 
+    guardBranchesAvailable([target]);
     checkout(target);
     console.log(pc.green(`Moved up to ${pc.bold(target)}`));
   });
@@ -77,6 +79,7 @@ program
       process.exit(1);
     }
 
+    guardBranchesAvailable([meta.parent]);
     checkout(meta.parent);
     console.log(pc.green(`Moved down to ${pc.bold(meta.parent)}`));
   });

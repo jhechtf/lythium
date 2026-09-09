@@ -5,12 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { init, isInitialized, LyError, load, save } from '../store.ts';
 
 vi.mock('../git.ts', () => ({
-  getRepoRoot: vi.fn(),
+  gitCommonDir: vi.fn(),
 }));
 
-import { getRepoRoot } from '../git.ts';
+import { gitCommonDir } from '../git.ts';
 
-const mockGetRepoRoot = vi.mocked(getRepoRoot);
+const mockGitCommonDir = vi.mocked(gitCommonDir);
 
 let tmpRoot: string;
 
@@ -20,7 +20,7 @@ beforeEach(() => {
     `ly-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   mkdirSync(join(tmpRoot, '.git', 'ly'), { recursive: true });
-  mockGetRepoRoot.mockReturnValue(tmpRoot);
+  mockGitCommonDir.mockReturnValue(join(tmpRoot, '.git'));
 });
 
 afterEach(() => {
