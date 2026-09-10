@@ -65,20 +65,30 @@ export function load(): LyStore {
   }
   if (!isLyStore(parsed)) {
     throw new LyError(
-      `Stack metadata at ${path} is malformed (missing trunk/branches).`,
+      `Stack metadata at ${path} is malformed (bad trunk/branches or a branch record).`,
     );
   }
   return parsed;
 }
 
+function isBranchMeta(v: unknown): v is BranchMeta {
+  if (typeof v !== 'object' || v === null) return false;
+  const m = v as Partial<BranchMeta>;
+  if (typeof m.parent !== 'string') return false;
+  if (m.prNumber !== undefined && typeof m.prNumber !== 'number') return false;
+  if (m.prUrl !== undefined && typeof m.prUrl !== 'string') return false;
+  return true;
+}
+
 function isLyStore(v: unknown): v is LyStore {
   if (typeof v !== 'object' || v === null) return false;
   const s = v as Partial<LyStore>;
-  return (
-    typeof s.trunk === 'string' &&
-    typeof s.branches === 'object' &&
-    s.branches !== null
-  );
+  if (typeof s.trunk !== 'string') return false;
+  if (typeof s.branches !== 'object' || s.branches === null) return false;
+  // Every branch record must be well-formed: `getChildren()` and the stack
+  // renderers dereference `meta.parent` unguarded, and a bad `prNumber`/`prUrl`
+  // produces malformed PR links. Reject the whole file rather than crash later.
+  return Object.values(s.branches).every(isBranchMeta);
 }
 
 export function save(store: LyStore): void {

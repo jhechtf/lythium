@@ -145,6 +145,19 @@ describe('updateTrunk', () => {
       expect.anything(),
     );
   });
+
+  it('prefers the holding worktree over currentBranch (bare dir: HEAD still resolves to trunk)', () => {
+    mockExecSync.mockReturnValue('main\n'); // currentBranch() — but no work tree here
+    mockExecFileSync.mockReturnValue('');
+    updateTrunk('main', '/repo/main');
+    expect(mockExecSync).not.toHaveBeenCalled();
+    expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      'git',
+      ['-C', '/repo/main', 'merge', '--ff-only', 'origin/main'],
+      expect.anything(),
+    );
+  });
 });
 
 // ─── listLocalBranches ───────────────────────────────────────────────────────

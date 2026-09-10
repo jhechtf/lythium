@@ -86,6 +86,54 @@ describe('load', () => {
     );
     expect(() => load()).toThrow(/malformed/);
   });
+
+  it('throws LyError when a branch record is not an object', () => {
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify({ trunk: 'main', branches: { 'feat/a': null } }),
+    );
+    expect(() => load()).toThrow(/malformed/);
+  });
+
+  it('throws LyError when a branch record has no string parent', () => {
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify({
+        trunk: 'main',
+        branches: { 'feat/a': { prNumber: 3 } },
+      }),
+    );
+    expect(() => load()).toThrow(/malformed/);
+  });
+
+  it('throws LyError when prNumber / prUrl have the wrong type', () => {
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify({
+        trunk: 'main',
+        branches: { 'feat/a': { parent: 'main', prNumber: '3' } },
+      }),
+    );
+    expect(() => load()).toThrow(/malformed/);
+  });
+
+  it('accepts a valid store with fully-populated branch metadata', () => {
+    const store = {
+      trunk: 'main',
+      branches: {
+        'feat/a': {
+          parent: 'main',
+          prNumber: 3,
+          prUrl: 'https://github.com/o/r/pull/3',
+        },
+      },
+    };
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify(store),
+    );
+    expect(load()).toEqual(store);
+  });
 });
 
 // ─── save ────────────────────────────────────────────────────────────────────

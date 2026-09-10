@@ -242,12 +242,16 @@ export function fetch(): void {
  * which also keeps its HEAD, index and files consistent with the moved ref.
  */
 export function updateTrunk(trunk: string, inWorktree?: string): void {
-  if (currentBranch() === trunk) {
-    gitArgs(['merge', '--ff-only', `origin/${trunk}`]);
-    return;
-  }
+  // Check `inWorktree` before `currentBranch()`: when sync runs from the bare
+  // dir, `currentBranch()` still resolves to trunk (HEAD points at it) even
+  // though there is no working tree here, so a plain `git merge` would fail.
+  // A caller-supplied worktree path is authoritative — trunk really lives there.
   if (inWorktree) {
     gitArgs(['-C', inWorktree, 'merge', '--ff-only', `origin/${trunk}`]);
+    return;
+  }
+  if (currentBranch() === trunk) {
+    gitArgs(['merge', '--ff-only', `origin/${trunk}`]);
     return;
   }
   // Only fast-forward: refuse to move trunk backward over local-only commits.
