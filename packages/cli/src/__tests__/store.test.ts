@@ -87,6 +87,14 @@ describe('load', () => {
     expect(() => load()).toThrow(/malformed/);
   });
 
+  it('throws LyError when branches is an array', () => {
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify({ trunk: 'main', branches: [] }),
+    );
+    expect(() => load()).toThrow(/malformed/);
+  });
+
   it('throws LyError when a branch record is not an object', () => {
     writeFileSync(
       join(tmpRoot, '.git', 'ly', 'meta.json'),
@@ -159,6 +167,33 @@ describe('save', () => {
     };
     save(store);
     expect(load()).toEqual(store);
+  });
+});
+
+// ─── save: lost-update guard ─────────────────────────────────────────────────
+
+describe('save (concurrent-write guard)', () => {
+  it('refuses to overwrite a store that changed since load()', () => {
+    save({ trunk: 'main', branches: {} });
+    const store = load();
+    // Simulate a sibling worktree writing the shared store in the meantime.
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify({
+        trunk: 'main',
+        branches: { 'feat/other': { parent: 'main' } },
+      }),
+    );
+    store.branches.feat_a = { parent: 'main' };
+    expect(() => save(store)).toThrow(/changed while this command was running/);
+  });
+
+  it('allows save() when the store is untouched since load()', () => {
+    save({ trunk: 'main', branches: {} });
+    const store = load();
+    store.branches.feat_a = { parent: 'main' };
+    expect(() => save(store)).not.toThrow();
+    expect(load().branches.feat_a).toEqual({ parent: 'main' });
   });
 });
 
