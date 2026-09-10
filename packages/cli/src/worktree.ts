@@ -39,8 +39,9 @@ export function branchCheckedOutElsewhere(
   try {
     here = getRepoRoot();
   } catch {
-    // No working tree (running from the bare dir) — nothing local to conflict.
-    return undefined;
+    // No working tree (running from the bare dir): nothing is checked out
+    // *here*, so any worktree holding the branch is by definition elsewhere.
+    return hit.path;
   }
 
   return samePath(hit.path, here) ? undefined : hit.path;
@@ -50,32 +51,50 @@ export function branchCheckedOutElsewhere(
  * Throw `LyError` if any of `branches` is checked out in another worktree.
  * Call this before a command starts checking out / rebasing a set of branches,
  * so a shared branch can't leave the stack half-restacked.
+ *
+ * Pass `trunk` so a conflict on trunk itself gets advice that fits the bare
+ * layout — trunk's worktree is permanent, so "remove that worktree" is wrong.
  */
-export function assertBranchesAvailable(branches: Iterable<string>): void {
+export function assertBranchesAvailable(
+  branches: Iterable<string>,
+  trunk?: string,
+): void {
   const worktrees = listWorktrees();
   const conflicts: string[] = [];
+  let trunkConflict = false;
 
   for (const branch of new Set(branches)) {
     const other = branchCheckedOutElsewhere(branch, worktrees);
-    if (other) conflicts.push(`  ${branch} — checked out at ${other}`);
+    if (!other) continue;
+    if (branch === trunk) {
+      trunkConflict = true;
+      conflicts.push(`  ${branch} (trunk) — checked out at ${other}`);
+    } else {
+      conflicts.push(`  ${branch} — checked out at ${other}`);
+    }
   }
 
-  if (conflicts.length > 0) {
-    throw new LyError(
-      `${conflicts.length === 1 ? 'A branch is' : 'Branches are'} checked out in ` +
-        `another worktree and cannot be moved:\n${conflicts.join('\n')}\n` +
-        'Switch away from or remove that worktree, then re-run.',
-    );
-  }
+  if (conflicts.length === 0) return;
+
+  const advice = trunkConflict
+    ? 'cd into that worktree to work on trunk, or choose a different branch.'
+    : 'Switch away from or remove that worktree, then re-run.';
+  throw new LyError(
+    `${conflicts.length === 1 ? 'A branch is' : 'Branches are'} checked out in ` +
+      `another worktree and cannot be moved:\n${conflicts.join('\n')}\n${advice}`,
+  );
 }
 
 /**
  * `assertBranchesAvailable`, but prints the error in red and exits non-zero
  * instead of throwing — matches how the branch-mutating commands report failures.
  */
-export function guardBranchesAvailable(branches: Iterable<string>): void {
+export function guardBranchesAvailable(
+  branches: Iterable<string>,
+  trunk?: string,
+): void {
   try {
-    assertBranchesAvailable(branches);
+    assertBranchesAvailable(branches, trunk);
   } catch (e) {
     console.error(pc.red(e instanceof LyError ? e.message : String(e)));
     process.exit(1);

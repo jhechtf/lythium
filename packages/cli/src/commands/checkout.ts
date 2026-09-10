@@ -31,7 +31,7 @@ program
         );
         process.exit(1);
       }
-      guardBranchesAvailable([branchArg]);
+      guardBranchesAvailable([branchArg], store.trunk);
       gitCheckout(branchArg);
       console.log(pc.green(`Switched to ${pc.bold(branchArg)}`));
       return;
@@ -58,7 +58,7 @@ program
       process.exit(0);
     }
 
-    guardBranchesAvailable([choice as string]);
+    guardBranchesAvailable([choice as string], store.trunk);
     gitCheckout(choice as string);
     console.log(pc.green(`Switched to ${pc.bold(choice as string)}`));
   });

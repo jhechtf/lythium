@@ -128,6 +128,13 @@ export function createBareClone(): BareCloneContext {
   run('config commit.gpgsign false', bareDir);
   run('config user.email "test@test.com"', bareDir);
   run('config user.name "Test"', bareDir);
+  // `clone --bare` leaves no fetch refspec, so `git fetch` never populates
+  // `refs/remotes/origin/*`. A bare clone used as a dev checkout needs one.
+  run(
+    'config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"',
+    bareDir,
+  );
+  run('fetch origin', bareDir);
 
   const worktrees = new Map<string, string>();
 

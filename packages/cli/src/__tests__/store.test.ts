@@ -69,6 +69,23 @@ describe('load', () => {
     );
     expect(load()).toEqual(store);
   });
+
+  it('throws LyError on truncated / invalid JSON instead of a SyntaxError', () => {
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      '{ "trunk": "main", "branch',
+    );
+    expect(() => load()).toThrow(LyError);
+    expect(() => load()).toThrow(/not valid JSON/);
+  });
+
+  it('throws LyError when the JSON is well-formed but not a store', () => {
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify({ trunk: 'main' }),
+    );
+    expect(() => load()).toThrow(/malformed/);
+  });
 });
 
 // ─── save ────────────────────────────────────────────────────────────────────

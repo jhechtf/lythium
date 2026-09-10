@@ -25,7 +25,12 @@ Built with Commander. Each subcommand is a module under `src/commands/` that cal
   `{ trunk, branches: { [name]: { parent, prNumber?, prUrl? } } }`.
   The path is anchored to `git rev-parse --git-common-dir` (not `<repoRoot>/.git`) so a bare
   clone works and every linked worktree shares one store.
-  A pure parent-pointer graph — no ordering is stored. `load()` throws `LyError` if the repo isn't initialized; commands catch it and exit non-zero.
+  A pure parent-pointer graph — no ordering is stored. `load()` throws `LyError` if the repo
+  isn't initialized, if the file isn't valid JSON, or if it isn't a well-formed store;
+  commands catch it and exit non-zero. `save()` writes to a sibling temp file and `rename`s
+  it into place, so an interrupted write can't leave a partial `meta.json`. There is still
+  **no cross-process lock** — two `ly` commands doing read-modify-write concurrently (e.g. in
+  two worktrees) can lose an update; a lockfile is a planned follow-up.
 - **`src/stack.ts`** — derives structure from the store: `getAncestors` / `getStack` / `getAllDescendants` (BFS, parent always before child), tree rendering for `ly log`, and the PR-body **stack section**: a markdown block fenced by the HTML comments `STACK_START` / `STACK_END`. `ly sync --rebuild` parses that same section back out of open PRs to reconstruct the store, so the format here is a serialization contract, not just display — change both the writer (`buildStackSection`) and the reader (`parseStackSection` in `commands/sync.ts`) together.
 - **`src/git.ts`** — all git goes through here. `git(cmd)` uses `execSync` (shell); `gitArgs(args)` uses `execFileSync` (argv, no shell) — use `gitArgs` for any value that is not a trusted, validated ref. Errors are wrapped as `GitError` from stderr. `forceRebase(branch, onto, returnTo)` is the workhorse for restacking and always attempts to return to `returnTo`, even on rebase failure. Worktree helpers: `isBareRepo`, `gitCommonDir`, `listWorktrees`.
 - **`src/worktree.ts`** — bare-clone / multi-worktree handling. `assertBranchesAvailable` / `guardBranchesAvailable` throw (or print + exit) when a branch is checked out in another worktree; branch-mutating commands (`checkout`, `up`/`down`, `modify`, `restack`, `sync`) call this **before** touching anything, so a shared branch can't leave the stack half-restacked. `describeWorktreeLayout` powers the informational note `ly init` prints in a multi-worktree setup.

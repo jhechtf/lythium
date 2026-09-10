@@ -76,11 +76,12 @@ describe('branchCheckedOutElsewhere', () => {
     expect(branchCheckedOutElsewhere('feat/y')).toBeUndefined();
   });
 
-  it('returns undefined when there is no working tree (bare)', () => {
+  it('reports the holding worktree when run without a working tree (bare dir)', () => {
     mockGetRepoRoot.mockImplementation(() => {
       throw new Error('this operation must be run in a work tree');
     });
-    expect(branchCheckedOutElsewhere('feat/x')).toBeUndefined();
+    // Nothing is checked out in the bare dir, so any hit is elsewhere.
+    expect(branchCheckedOutElsewhere('feat/x')).toBe('/repo/feat');
   });
 });
 
@@ -110,6 +111,24 @@ describe('assertBranchesAvailable', () => {
       expect((e as LyError).message).toContain('/repo/a');
       expect((e as LyError).message).toContain('feat/b');
       expect((e as LyError).message).not.toContain('feat/c');
+    }
+  });
+
+  it('gives trunk-appropriate advice when trunk is the conflict', () => {
+    // Running from the feature worktree; trunk lives in /repo/main.
+    mockGetRepoRoot.mockReturnValue('/repo/feat');
+    mockListWorktrees.mockReturnValue([
+      wt({ path: '/repo/feat', branch: 'feat/x' }),
+      wt({ path: '/repo/main', branch: 'main' }),
+    ]);
+
+    try {
+      assertBranchesAvailable(['main'], 'main');
+      expect.unreachable();
+    } catch (e) {
+      expect((e as LyError).message).toContain('(trunk)');
+      expect((e as LyError).message).toContain('cd into that worktree');
+      expect((e as LyError).message).not.toContain('remove that worktree');
     }
   });
 });

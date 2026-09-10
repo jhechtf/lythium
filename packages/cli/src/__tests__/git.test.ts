@@ -8,6 +8,7 @@ import {
   listLocalBranches,
   listWorktrees,
   parseOwnerRepo,
+  updateTrunk,
 } from '../git.ts';
 
 const { mockExecSync, mockExecFileSync } = vi.hoisted(() => ({
@@ -97,6 +98,52 @@ describe('currentBranch', () => {
   it('returns the trimmed branch name', () => {
     mockExecSync.mockReturnValue('main\n');
     expect(currentBranch()).toBe('main');
+  });
+});
+
+// ─── updateTrunk ─────────────────────────────────────────────────────────────
+
+describe('updateTrunk', () => {
+  it('ff-merges in place when trunk is the current branch', () => {
+    mockExecSync.mockReturnValue('main\n'); // currentBranch()
+    mockExecFileSync.mockReturnValue('');
+    updateTrunk('main');
+    expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      'git',
+      ['merge', '--ff-only', 'origin/main'],
+      expect.anything(),
+    );
+  });
+
+  it('moves the ref with branch -f when trunk is checked out nowhere', () => {
+    mockExecSync.mockReturnValue('feat/x\n');
+    mockExecFileSync.mockReturnValue('');
+    updateTrunk('main');
+    expect(mockExecFileSync).toHaveBeenNthCalledWith(
+      1,
+      'git',
+      ['merge-base', '--is-ancestor', 'main', 'origin/main'],
+      expect.anything(),
+    );
+    expect(mockExecFileSync).toHaveBeenNthCalledWith(
+      2,
+      'git',
+      ['branch', '-f', 'main', 'origin/main'],
+      expect.anything(),
+    );
+  });
+
+  it('ff-merges inside the holding worktree when trunk lives elsewhere', () => {
+    mockExecSync.mockReturnValue('feat/x\n');
+    mockExecFileSync.mockReturnValue('');
+    updateTrunk('main', '/repo/main');
+    expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      'git',
+      ['-C', '/repo/main', 'merge', '--ff-only', 'origin/main'],
+      expect.anything(),
+    );
   });
 });
 

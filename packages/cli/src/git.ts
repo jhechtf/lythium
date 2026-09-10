@@ -234,16 +234,25 @@ export function fetch(): void {
 
 /**
  * Fast-forward the local trunk branch to match `origin/<trunk>`.
- * Works whether or not trunk is the currently checked-out branch.
+ *
+ * `inWorktree` is the path of the worktree that has trunk checked out, when
+ * that is not the current one. `git branch -f` refuses to move a branch another
+ * worktree is using, so in the canonical bare layout (trunk lives in its own
+ * worktree) the fast-forward has to be driven inside that worktree instead,
+ * which also keeps its HEAD, index and files consistent with the moved ref.
  */
-export function updateTrunk(trunk: string): void {
+export function updateTrunk(trunk: string, inWorktree?: string): void {
   if (currentBranch() === trunk) {
     gitArgs(['merge', '--ff-only', `origin/${trunk}`]);
-  } else {
-    // Only fast-forward: refuse to move trunk backward over local-only commits.
-    gitArgs(['merge-base', '--is-ancestor', trunk, `origin/${trunk}`]);
-    gitArgs(['branch', '-f', trunk, `origin/${trunk}`]);
+    return;
   }
+  if (inWorktree) {
+    gitArgs(['-C', inWorktree, 'merge', '--ff-only', `origin/${trunk}`]);
+    return;
+  }
+  // Only fast-forward: refuse to move trunk backward over local-only commits.
+  gitArgs(['merge-base', '--is-ancestor', trunk, `origin/${trunk}`]);
+  gitArgs(['branch', '-f', trunk, `origin/${trunk}`]);
 }
 
 export function isMergedInto(branch: string, target: string): boolean {

@@ -79,7 +79,7 @@ program
       process.exit(1);
     }
 
-    guardBranchesAvailable([meta.parent]);
+    guardBranchesAvailable([meta.parent], store.trunk);
     checkout(meta.parent);
     console.log(pc.green(`Moved down to ${pc.bold(meta.parent)}`));
   });

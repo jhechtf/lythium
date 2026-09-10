@@ -55,4 +55,23 @@ describe('bare clone + multiple worktrees', () => {
       expect(main.ly(['restack', '--all']).status).toBe(0);
     },
   );
+
+  it(
+    'syncs from a feature worktree while trunk lives in another',
+    { timeout: 30_000 },
+    () => {
+      const repo = createBareClone();
+      const main = repo.addWorktree('main', 'main');
+      main.ly(['init', '--trunk', 'main'], 'y\n');
+      expect(main.ly(['create', 'feature-a', '-m', 'feat: a']).status).toBe(0);
+      main.ly(['checkout', 'main']);
+
+      // feature-a moves into its own worktree; trunk stays checked out in `main`.
+      const feat = repo.addWorktree('wa', 'feature-a');
+
+      const res = feat.ly(['sync']);
+      expect(res.stderr).not.toContain('cannot force update');
+      expect(res.status).toBe(0);
+    },
+  );
 });
