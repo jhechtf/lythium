@@ -11,6 +11,7 @@ import {
 } from '../git.ts';
 import { getAllDescendants } from '../stack.ts';
 import { LyError, load, save } from '../store.ts';
+import { assertBranchesAvailable } from '../worktree.ts';
 
 program
   .command('modify')
@@ -38,6 +39,10 @@ program
         );
         process.exit(1);
       }
+
+      // A descendant checked out in another worktree can't be rebased; bail
+      // before amending so we don't leave the stack half-restacked.
+      assertBranchesAvailable(getAllDescendants(store, branch));
 
       if (opts.all) stageAll();
 

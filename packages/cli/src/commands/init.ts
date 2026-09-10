@@ -3,6 +3,7 @@ import { program } from 'commander';
 import pc from 'picocolors';
 import { isGitRepo, listLocalBranches } from '../git.ts';
 import { init, isInitialized } from '../store.ts';
+import { describeWorktreeLayout } from '../worktree.ts';
 
 program
   .command('init')
@@ -61,5 +62,17 @@ program
     }
 
     init(trunk);
+
+    const layout = describeWorktreeLayout();
+    if (layout.worktreeCount > 1) {
+      console.log(
+        pc.dim(
+          `Detected ${layout.worktreeCount} worktrees${layout.bare ? ' on a bare clone' : ''}. ` +
+            'Stack metadata is shared across all of them; a branch can only be ' +
+            'restacked from the worktree that has it checked out.',
+        ),
+      );
+    }
+
     outro(pc.green(`Initialized! Trunk branch: ${pc.bold(trunk)}`));
   });

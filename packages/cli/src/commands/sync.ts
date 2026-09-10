@@ -24,6 +24,10 @@ import {
   load,
   save,
 } from '../store.ts';
+import {
+  branchCheckedOutElsewhere,
+  guardBranchesAvailable,
+} from '../worktree.ts';
 
 // ─── Rebuild helpers ──────────────────────────────────────────────────────────
 
@@ -263,16 +267,30 @@ program
       }
     }
 
+    // sync updates the local trunk, then deletes, reparents, checks out and
+    // rebases tracked branches. If any of them is checked out in another
+    // worktree, none of that can proceed — fail now, before mutating anything
+    // (including the trunk update below).
+    guardBranchesAvailable(Object.keys(store.branches), store.trunk);
+
+    // Trunk is never a key in store.branches, so the guard above doesn't cover
+    // it. In the canonical bare layout trunk lives in its own worktree; when it
+    // does, updateTrunk fast-forwards it there instead of failing on `branch -f`.
+    const trunkWorktree = branchCheckedOutElsewhere(store.trunk);
+
     // Bring the local trunk up to date so restacks target the new base
     process.stdout.write(pc.dim(`Updating ${store.trunk}... `));
     try {
-      updateTrunk(store.trunk);
+      updateTrunk(store.trunk, trunkWorktree);
       process.stdout.write(pc.green('✓\n'));
     } catch (e) {
       process.stdout.write(pc.yellow('skipped\n'));
       console.warn(
         pc.yellow(
-          `Could not fast-forward ${store.trunk}: ${(e as Error).message}`,
+          trunkWorktree
+            ? `Could not fast-forward ${store.trunk}: it is checked out at ` +
+                `${trunkWorktree} with local changes — commit or stash them there.`
+            : `Could not fast-forward ${store.trunk}: ${(e as Error).message}`,
         ),
       );
       // A stale trunk would make the restack below target an outdated base,
@@ -370,8 +388,15 @@ program
       }
     }
 
-    // Return to where we started, or trunk if that branch was just deleted
-    checkout(listLocalBranches().includes(origin) ? origin : store.trunk);
+    // Return to where we started. If that branch was deleted as merged, fall
+    // back to trunk — but only if trunk isn't checked out in another worktree,
+    // in which case the checkout(meta.parent) done during deletion already left
+    // us somewhere valid.
+    if (listLocalBranches().includes(origin)) {
+      checkout(origin);
+    } else if (!branchCheckedOutElsewhere(store.trunk)) {
+      checkout(store.trunk);
+    }
 
     save(store);
     outro(pc.green('Sync complete'));
