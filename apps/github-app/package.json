@@ -3,7 +3,8 @@
   "type": "module",
   "scripts": {
     "dev": "node main.ts",
-    "build": "tsdown main.ts"
+    "build": "tsdown main.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
@@ -19,6 +20,6 @@
     "smee-client": "^5.0.0",
     "tsdown": "^0.12.5",
     "tsx": "^4.19.4",
-    "typescript": "^5.8.3"
+    "typescript": "^7.0.2"
   }
 }
