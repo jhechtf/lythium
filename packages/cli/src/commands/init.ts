@@ -36,7 +36,7 @@ program
       const input = await text({
         message: 'Trunk branch name:',
         placeholder: 'main',
-        validate: (v) => (v.trim() ? undefined : 'Branch name is required'),
+        validate: (v) => (v?.trim() ? undefined : 'Branch name is required'),
       });
       if (isCancel(input)) {
         cancel();
@@ -50,7 +50,7 @@ program
       if (isCancel(ok) || !ok) {
         const input = await text({
           message: 'Trunk branch name:',
-          validate: (v) => (v.trim() ? undefined : 'Branch name is required'),
+          validate: (v) => (v?.trim() ? undefined : 'Branch name is required'),
         });
         if (isCancel(input)) {
           cancel();

@@ -39,6 +39,8 @@ pnpm --filter @lythium/api dev
 
 After any change, run `pnpm biome ci` from the repo root and fix everything it reports. Biome config lives in the root `biome.json` (2-space indent, single quotes, recommended lint rules, import organization on). `apps/web` has its own `biome.json` extending the same defaults. Each package's `CLAUDE.md` lists its additional type-check and test commands.
 
+Type-checking: `pnpm typecheck` (Turborepo, runs `tsc --noEmit` per package). The Node packages (`apps/api`, `apps/github-app`, `packages/cli`, `packages/db`) are on **TypeScript 7** (the native compiler — the `tsc` bin is the Go binary, no JS API). `apps/web` stays on TypeScript 5 because `svelte-check` needs the TS JS API. `pnpm bench:typecheck` compares TS 5 vs TS 7 type-check times — see `scripts/bench-typecheck.results.md`.
+
 # Conventions
 
 - **Branch names**: `[type]/[ticket#]-[description]`, `type` = conventional-commit type. e.g. `feat/lyt-6-web-ui-design`, `fix/lyt-3-cli-output-formatting`.
