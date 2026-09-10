@@ -1,4 +1,10 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -87,6 +93,14 @@ describe('load', () => {
     expect(() => load()).toThrow(/malformed/);
   });
 
+  it('throws LyError when branches is an array', () => {
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify({ trunk: 'main', branches: [] }),
+    );
+    expect(() => load()).toThrow(/malformed/);
+  });
+
   it('throws LyError when a branch record is not an object', () => {
     writeFileSync(
       join(tmpRoot, '.git', 'ly', 'meta.json'),
@@ -159,6 +173,65 @@ describe('save', () => {
     };
     save(store);
     expect(load()).toEqual(store);
+  });
+});
+
+// ─── save: lost-update guard ─────────────────────────────────────────────────
+
+describe('save (concurrent-write guard)', () => {
+  it('refuses to overwrite a store that changed since load()', () => {
+    save({ trunk: 'main', branches: {} });
+    const store = load();
+    // Simulate a sibling worktree writing the shared store in the meantime.
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify({
+        trunk: 'main',
+        branches: { 'feat/other': { parent: 'main' } },
+      }),
+    );
+    store.branches.feat_a = { parent: 'main' };
+    expect(() => save(store)).toThrow(/changed while this command was running/);
+  });
+
+  it('allows save() when the store is untouched since load()', () => {
+    save({ trunk: 'main', branches: {} });
+    const store = load();
+    store.branches.feat_a = { parent: 'main' };
+    expect(() => save(store)).not.toThrow();
+    expect(load().branches.feat_a).toEqual({ parent: 'main' });
+  });
+});
+
+// ─── save: cross-process lock ────────────────────────────────────────────────
+
+describe('save (lock)', () => {
+  it('throws instead of hanging forever when another process holds the lock', () => {
+    save({ trunk: 'main', branches: {} });
+    const store = load();
+    const lockPath = join(tmpRoot, '.git', 'ly', 'meta.json.lock');
+    const fd = openSync(lockPath, 'wx');
+    writeFileSync(fd, '99999');
+    closeSync(fd);
+    try {
+      expect(() => save(store)).toThrow(/Could not acquire lock/);
+    } finally {
+      // release()'s unlink runs on the throwing path too, but the lock here
+      // was created by the test, not save(), so clean it up ourselves.
+      try {
+        unlinkSync(lockPath);
+      } catch {}
+    }
+  }, 8000);
+
+  it('releases the lock so a subsequent save() succeeds', () => {
+    save({ trunk: 'main', branches: {} });
+    const store = load();
+    store.branches.feat_a = { parent: 'main' };
+    save(store);
+    const again = load();
+    again.branches.feat_b = { parent: 'main' };
+    expect(() => save(again)).not.toThrow();
   });
 });
 
