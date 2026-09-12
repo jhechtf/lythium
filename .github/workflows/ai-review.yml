@@ -1,0 +1,83 @@
+name: AI Review
+
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+# Only one review per PR at a time; a new push supersedes an in-flight review.
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Claude PR review
+    runs-on: ubuntu-latest
+    # Run when the `ai-review` label is added, and on every later push/reopen
+    # while that label is still present.
+    if: >-
+      (github.event.action == 'labeled' && github.event.label.name == 'ai-review') ||
+      (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'ai-review'))
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are reviewing pull request #${{ github.event.pull_request.number }}
+            in ${{ github.repository }}. The triggering event was
+            "${{ github.event.action }}" ("synchronize" or "reopened" means a new
+            push was made to a PR you have reviewed before).
+
+            ## Gather context
+            1. `gh pr diff ${{ github.event.pull_request.number }}` — the full diff under review.
+            2. `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews`
+               — every prior review. Find the ones authored by "github-actions[bot]"
+               with state CHANGES_REQUESTED; those are your earlier reviews.
+            3. For each such prior review, read its body and any inline comments
+               (`gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments`)
+               so you know exactly which issues you previously flagged.
+
+            ## What counts as a major risk
+            Only flag MAJOR risks — do not comment on style, naming, or minor nits:
+            - Security vulnerabilities (injection, auth bypass, secret exposure, SSRF, etc.)
+            - Data loss or corruption, unsafe migrations
+            - Correctness bugs that break a primary code path
+            - Breaking API / schema / contract changes made silently
+            - Concurrency / race conditions with real impact
+
+            ## How to decide
+
+            If this is a re-review after a new push:
+            - FIRST, go through each issue from your previous CHANGES_REQUESTED
+              review(s), in priority order (most severe first). For each, inspect
+              the current code and decide: resolved, partially resolved, or not
+              addressed. State this explicitly in your review body.
+            - THEN scan the newly pushed changes for any new major risks.
+            - APPROVE (`gh pr review ${{ github.event.pull_request.number }} --approve`)
+              only if every previously requested change is fully resolved AND no
+              new major risk is present.
+            - Otherwise REQUEST CHANGES
+              (`gh pr review ${{ github.event.pull_request.number }} --request-changes`),
+              listing what is still outstanding and any new major risk.
+
+            For a first review:
+            - REQUEST CHANGES if there is one or more major risk, each described
+              with file/line and why it matters.
+            - APPROVE if you find no major risk.
+
+            Always submit exactly one review via `gh pr review` with a clear body
+            (use `--body`). Keep the body focused and skimmable.
+          claude_args: |
+            --allowed-tools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*)"
