@@ -1,16 +1,22 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { init, isInitialized, LyError, load, save } from '../store.ts';
 
 vi.mock('../git.ts', () => ({
-  getRepoRoot: vi.fn(),
+  gitCommonDir: vi.fn(),
 }));
 
-import { getRepoRoot } from '../git.ts';
+import { gitCommonDir } from '../git.ts';
 
-const mockGetRepoRoot = vi.mocked(getRepoRoot);
+const mockGitCommonDir = vi.mocked(gitCommonDir);
 
 let tmpRoot: string;
 
@@ -20,7 +26,7 @@ beforeEach(() => {
     `ly-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   mkdirSync(join(tmpRoot, '.git', 'ly'), { recursive: true });
-  mockGetRepoRoot.mockReturnValue(tmpRoot);
+  mockGitCommonDir.mockReturnValue(join(tmpRoot, '.git'));
 });
 
 afterEach(() => {
@@ -69,6 +75,79 @@ describe('load', () => {
     );
     expect(load()).toEqual(store);
   });
+
+  it('throws LyError on truncated / invalid JSON instead of a SyntaxError', () => {
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      '{ "trunk": "main", "branch',
+    );
+    expect(() => load()).toThrow(LyError);
+    expect(() => load()).toThrow(/not valid JSON/);
+  });
+
+  it('throws LyError when the JSON is well-formed but not a store', () => {
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify({ trunk: 'main' }),
+    );
+    expect(() => load()).toThrow(/malformed/);
+  });
+
+  it('throws LyError when branches is an array', () => {
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify({ trunk: 'main', branches: [] }),
+    );
+    expect(() => load()).toThrow(/malformed/);
+  });
+
+  it('throws LyError when a branch record is not an object', () => {
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify({ trunk: 'main', branches: { 'feat/a': null } }),
+    );
+    expect(() => load()).toThrow(/malformed/);
+  });
+
+  it('throws LyError when a branch record has no string parent', () => {
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify({
+        trunk: 'main',
+        branches: { 'feat/a': { prNumber: 3 } },
+      }),
+    );
+    expect(() => load()).toThrow(/malformed/);
+  });
+
+  it('throws LyError when prNumber / prUrl have the wrong type', () => {
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify({
+        trunk: 'main',
+        branches: { 'feat/a': { parent: 'main', prNumber: '3' } },
+      }),
+    );
+    expect(() => load()).toThrow(/malformed/);
+  });
+
+  it('accepts a valid store with fully-populated branch metadata', () => {
+    const store = {
+      trunk: 'main',
+      branches: {
+        'feat/a': {
+          parent: 'main',
+          prNumber: 3,
+          prUrl: 'https://github.com/o/r/pull/3',
+        },
+      },
+    };
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify(store),
+    );
+    expect(load()).toEqual(store);
+  });
 });
 
 // ─── save ────────────────────────────────────────────────────────────────────
@@ -94,6 +173,65 @@ describe('save', () => {
     };
     save(store);
     expect(load()).toEqual(store);
+  });
+});
+
+// ─── save: lost-update guard ─────────────────────────────────────────────────
+
+describe('save (concurrent-write guard)', () => {
+  it('refuses to overwrite a store that changed since load()', () => {
+    save({ trunk: 'main', branches: {} });
+    const store = load();
+    // Simulate a sibling worktree writing the shared store in the meantime.
+    writeFileSync(
+      join(tmpRoot, '.git', 'ly', 'meta.json'),
+      JSON.stringify({
+        trunk: 'main',
+        branches: { 'feat/other': { parent: 'main' } },
+      }),
+    );
+    store.branches.feat_a = { parent: 'main' };
+    expect(() => save(store)).toThrow(/changed while this command was running/);
+  });
+
+  it('allows save() when the store is untouched since load()', () => {
+    save({ trunk: 'main', branches: {} });
+    const store = load();
+    store.branches.feat_a = { parent: 'main' };
+    expect(() => save(store)).not.toThrow();
+    expect(load().branches.feat_a).toEqual({ parent: 'main' });
+  });
+});
+
+// ─── save: cross-process lock ────────────────────────────────────────────────
+
+describe('save (lock)', () => {
+  it('throws instead of hanging forever when another process holds the lock', () => {
+    save({ trunk: 'main', branches: {} });
+    const store = load();
+    const lockPath = join(tmpRoot, '.git', 'ly', 'meta.json.lock');
+    const fd = openSync(lockPath, 'wx');
+    writeFileSync(fd, '99999');
+    closeSync(fd);
+    try {
+      expect(() => save(store)).toThrow(/Could not acquire lock/);
+    } finally {
+      // release()'s unlink runs on the throwing path too, but the lock here
+      // was created by the test, not save(), so clean it up ourselves.
+      try {
+        unlinkSync(lockPath);
+      } catch {}
+    }
+  }, 8000);
+
+  it('releases the lock so a subsequent save() succeeds', () => {
+    save({ trunk: 'main', branches: {} });
+    const store = load();
+    store.branches.feat_a = { parent: 'main' };
+    save(store);
+    const again = load();
+    again.branches.feat_b = { parent: 'main' };
+    expect(() => save(again)).not.toThrow();
   });
 });
 

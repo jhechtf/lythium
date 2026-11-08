@@ -1,8 +1,10 @@
 {
   "$schema": "https://v2-9-6.turborepo.dev/schema.json",
+  "globalEnv": ["GITHUB_APP_CLIENT_ID", "GITHUB_APP_CLIENT_SECRET", "API_URL"],
   "tasks": {
     "build": {
-      "outputs": ["dist/**"]
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".svelte-kit/**", "build/**"]
     },
     "typecheck": {
       "dependsOn": ["^typecheck"],
@@ -11,6 +13,20 @@
     "dev": {
       "persistent": true,
       "cache": false
+    },
+    "check": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "!**/*.md"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "!**/*.md"]
+    },
+    "e2e:ci": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "!**/*.md"],
+      "outputs": ["playwright-report/**", "blob-report/**", "test-results/**"],
+      "env": ["CI"]
     }
   }
 }

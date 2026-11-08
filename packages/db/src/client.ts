@@ -9,4 +9,3 @@ export function createDb(databaseUrl: string) {
   const db = drizzle(sql, { schema });
   return { db, sql };
 }
-

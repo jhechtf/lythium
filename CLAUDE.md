@@ -41,6 +41,28 @@ After any change, run `pnpm biome ci` from the repo root and fix everything it r
 
 Type-checking: `pnpm typecheck` (Turborepo, runs `tsc --noEmit` per package). The Node packages (`apps/api`, `apps/github-app`, `packages/cli`, `packages/db`) are on **TypeScript 7** (the native compiler — the `tsc` bin is the Go binary, no JS API). `apps/web` stays on TypeScript 5 because `svelte-check` needs the TS JS API. `pnpm bench:typecheck` compares TS 5 vs TS 7 type-check times — see `scripts/bench-typecheck.results.md`.
 
+Run the affected packages' typecheck + unit tests via Turbo:
+
+```
+pnpm test          # turbo run test  (unit/component, all packages)
+pnpm check         # turbo run check (svelte-check / tsc)
+pnpm e2e           # turbo run e2e:ci (Playwright, apps that define it)
+```
+
+Single package:
+
+```
+pnpm --filter web test        # web unit + component (Vitest)
+pnpm --filter web test:e2e     # web e2e (Playwright)
+pnpm --filter @lythium/cli test
+```
+
+CI (`.github/workflows/ci.yml`) runs these Turbo tasks filtered to packages
+affected since the PR base, with the GitHub Actions cache as a Turbo remote
+cache. Steps with known pre-existing failures (all of `web` → LYT-43; the
+`ly sync` CLI test on Linux → LYT-44) run non-gating (`continue-on-error`)
+and move into the gating block as each ticket lands.
+
 # Conventions
 
 - **Branch names**: `[type]/[ticket#]-[description]`, `type` = conventional-commit type. e.g. `feat/lyt-6-web-ui-design`, `fix/lyt-3-cli-output-formatting`.

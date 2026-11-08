@@ -13,6 +13,7 @@
     "build": "tsdown src/index.ts --format esm --target node20 --out-dir dist",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "node ./dist/cli.js",
+    "check": "tsc --noEmit",
     "pretest": "pnpm run build",
     "test": "vitest run",
     "test:watch": "vitest"
