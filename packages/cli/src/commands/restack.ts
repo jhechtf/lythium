@@ -4,6 +4,7 @@ import pc from 'picocolors';
 import { checkout, currentBranch, forceRebase } from '../git.ts';
 import { getAllDescendants } from '../stack.ts';
 import { LyError, type LyStore, load, save } from '../store.ts';
+import { guardBranchesAvailable } from '../worktree.ts';
 
 program
   .command('restack')
@@ -47,6 +48,8 @@ program
       console.log(pc.yellow('Nothing to restack.'));
       return;
     }
+
+    guardBranchesAvailable(toRestack);
 
     console.log(pc.dim(`Restacking ${toRestack.length} branch(es)...`));
     for (const b of toRestack) {

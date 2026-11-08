@@ -3,6 +3,7 @@ import { program } from 'commander';
 import pc from 'picocolors';
 import { currentBranch, checkout as gitCheckout } from '../git.ts';
 import { LyError, type LyStore, load } from '../store.ts';
+import { guardBranchesAvailable } from '../worktree.ts';
 
 program
   .command('checkout')
@@ -30,6 +31,7 @@ program
         );
         process.exit(1);
       }
+      guardBranchesAvailable([branchArg], store.trunk);
       gitCheckout(branchArg);
       console.log(pc.green(`Switched to ${pc.bold(branchArg)}`));
       return;
@@ -56,6 +58,7 @@ program
       process.exit(0);
     }
 
+    guardBranchesAvailable([choice as string], store.trunk);
     gitCheckout(choice as string);
     console.log(pc.green(`Switched to ${pc.bold(choice as string)}`));
   });

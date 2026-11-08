@@ -63,6 +63,82 @@ export function getRepoRoot(): string {
   return git('rev-parse --show-toplevel');
 }
 
+/** True when the current git directory is a bare repository (no working tree). */
+export function isBareRepo(): boolean {
+  try {
+    return git('rev-parse --is-bare-repository') === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Absolute path to the *shared* git directory. For a linked worktree this is the
+ * main repo's `.git` (or the bare repo itself), not the worktree's private
+ * `.git/worktrees/<name>` directory — so state stored here is visible from every
+ * worktree attached to the same repo.
+ */
+export function gitCommonDir(): string {
+  return git('rev-parse --path-format=absolute --git-common-dir');
+}
+
+export interface Worktree {
+  /** Absolute path to the worktree's working directory. */
+  path: string;
+  /** Commit checked out here; absent for the bare entry. */
+  head?: string;
+  /** Short branch name checked out here; absent when detached or bare. */
+  branch?: string;
+  /** True for the repository's bare entry (it has no working tree). */
+  bare: boolean;
+  /** True when this worktree's HEAD is detached. */
+  detached: boolean;
+}
+
+/** Every worktree attached to this repo, parsed from `git worktree list --porcelain`. */
+export function listWorktrees(): Worktree[] {
+  // `-z` NUL-delimits records/attributes so a worktree path containing a
+  // newline can't be split into a bogus entry.
+  const out = gitArgs(['worktree', 'list', '--porcelain', '-z']);
+  const trees: Worktree[] = [];
+  let current: Partial<Worktree> | null = null;
+
+  const flush = () => {
+    if (current?.path) {
+      trees.push({
+        path: current.path,
+        head: current.head,
+        branch: current.branch,
+        bare: current.bare ?? false,
+        detached: current.detached ?? false,
+      });
+    }
+    current = null;
+  };
+
+  for (const line of out.split('\0')) {
+    if (line.startsWith('worktree ')) {
+      flush();
+      current = { path: line.slice('worktree '.length) };
+    } else if (!current) {
+      // Attribute line with no preceding `worktree` line — ignore.
+    } else if (line === 'bare') {
+      current.bare = true;
+    } else if (line === 'detached') {
+      current.detached = true;
+    } else if (line.startsWith('HEAD ')) {
+      current.head = line.slice('HEAD '.length);
+    } else if (line.startsWith('branch ')) {
+      current.branch = line
+        .slice('branch '.length)
+        .replace(/^refs\/heads\//, '');
+    }
+  }
+  flush();
+
+  return trees;
+}
+
 export function currentBranch(): string {
   return git('rev-parse --abbrev-ref HEAD');
 }
@@ -158,16 +234,29 @@ export function fetch(): void {
 
 /**
  * Fast-forward the local trunk branch to match `origin/<trunk>`.
- * Works whether or not trunk is the currently checked-out branch.
+ *
+ * `inWorktree` is the path of the worktree that has trunk checked out, when
+ * that is not the current one. `git branch -f` refuses to move a branch another
+ * worktree is using, so in the canonical bare layout (trunk lives in its own
+ * worktree) the fast-forward has to be driven inside that worktree instead,
+ * which also keeps its HEAD, index and files consistent with the moved ref.
  */
-export function updateTrunk(trunk: string): void {
+export function updateTrunk(trunk: string, inWorktree?: string): void {
+  // Check `inWorktree` before `currentBranch()`: when sync runs from the bare
+  // dir, `currentBranch()` still resolves to trunk (HEAD points at it) even
+  // though there is no working tree here, so a plain `git merge` would fail.
+  // A caller-supplied worktree path is authoritative — trunk really lives there.
+  if (inWorktree) {
+    gitArgs(['-C', inWorktree, 'merge', '--ff-only', `origin/${trunk}`]);
+    return;
+  }
   if (currentBranch() === trunk) {
     gitArgs(['merge', '--ff-only', `origin/${trunk}`]);
-  } else {
-    // Only fast-forward: refuse to move trunk backward over local-only commits.
-    gitArgs(['merge-base', '--is-ancestor', trunk, `origin/${trunk}`]);
-    gitArgs(['branch', '-f', trunk, `origin/${trunk}`]);
+    return;
   }
+  // Only fast-forward: refuse to move trunk backward over local-only commits.
+  gitArgs(['merge-base', '--is-ancestor', trunk, `origin/${trunk}`]);
+  gitArgs(['branch', '-f', trunk, `origin/${trunk}`]);
 }
 
 export function isMergedInto(branch: string, target: string): boolean {
