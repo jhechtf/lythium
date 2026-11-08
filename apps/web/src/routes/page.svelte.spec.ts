@@ -1,4 +1,5 @@
 import { page } from '@vitest/browser/context';
+import type { ComponentProps } from 'svelte';
 import { describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import Page from './+page.svelte';
@@ -10,7 +11,7 @@ const data = {
   owner: 'sungmanito',
   repo: 'mono',
   results: Promise.resolve({ data: { items: [] } }),
-};
+} as unknown as ComponentProps<typeof Page>['data'];
 
 describe('/+page.svelte', () => {
   it('should render the heading', async () => {

@@ -1,12 +1,14 @@
 <script lang="ts" module>
 import { defineMeta } from '@storybook/addon-svelte-csf';
+import type { Component } from 'svelte';
 import Toast from './toast.svelte';
 import ToastPortal from './toastPortal.svelte';
 
 const { Story } = defineMeta({
 	component: ToastPortal,
   subcomponents: {
-    Toast
+    // svelte-csf types `subcomponents` as prop-less components; Toast has required props.
+    Toast: Toast as unknown as Component<Record<string, never>>
   },
 });
 
