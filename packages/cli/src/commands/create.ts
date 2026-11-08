@@ -50,7 +50,7 @@ program
         const input = await text({
           message: 'New branch name:',
           placeholder: 'feat/my-change',
-          validate: (v) => (v.trim() ? undefined : 'Branch name is required'),
+          validate: (v) => (v?.trim() ? undefined : 'Branch name is required'),
         });
         if (isCancel(input)) {
           cancel();
@@ -76,7 +76,7 @@ program
             message: 'Commit message:',
             placeholder: `feat: ${branchName}`,
             validate: (v) =>
-              v.trim() ? undefined : 'Commit message is required',
+              v?.trim() ? undefined : 'Commit message is required',
           });
           if (isCancel(input)) {
             cancel();

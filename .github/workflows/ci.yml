@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on a branch/PR; always finish runs on main.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  TURBO_TELEMETRY_DISABLED: 1
+  DO_NOT_TRACK: 1
+
+jobs:
+  ci:
+    name: Affected lint / typecheck / test / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history so Turbo can diff against the affected base commit.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Uses the GitHub Actions cache as a Turbo remote cache backend — no
+      # external account or infra. Swap for Vercel Remote Cache / S3 later by
+      # replacing this step; nothing else changes.
+      - name: Set up Turbo remote cache
+        uses: rharkor/caching-for-turbo@v2.3.12
+
+      - name: Resolve affected base
+        id: affected
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          # Fall back to the previous commit if the event gave us nothing usable
+          # (first push to a branch, force-push, etc.).
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="HEAD^"
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "Affected base: $base"
+
+      - name: Configure git for CLI integration tests
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+          git config --global commit.gpgsign false
+          git config --global init.defaultBranch main
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: playwright-${{ runner.os }}-
+
+      - name: Install Playwright browser
+        run: pnpm --filter web exec playwright install --with-deps chromium
+
+      # ── Gating: currently green ────────────────────────────────────────────
+      - name: Lint & format
+        run: pnpm biome ci
+
+      - name: Typecheck · build — affected (excl. web)
+        run: >
+          pnpm turbo run check build
+          --filter="...[${{ steps.affected.outputs.base }}]"
+          --filter="!web"
+
+      # ── Non-gating: known pre-existing failures, tracked for promotion ─────
+      # Each step moves up into the gating block above once its ticket lands.
+      - name: Unit tests — affected (non-gating · LYT-44, LYT-43)
+        continue-on-error: true
+        run: pnpm turbo run test --filter="...[${{ steps.affected.outputs.base }}]"
+
+      - name: Typecheck · build — web (non-gating · LYT-43)
+        continue-on-error: true
+        run: pnpm turbo run check build --filter="web"
+
+      - name: E2E — affected (non-gating · LYT-43)
+        continue-on-error: true
+        run: pnpm turbo run e2e:ci --filter="...[${{ steps.affected.outputs.base }}]"
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
