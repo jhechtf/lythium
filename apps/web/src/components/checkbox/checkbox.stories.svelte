@@ -24,7 +24,7 @@ const { Story } = defineMeta({
 	name="Events"
 	args={{
 		onchange: (e) => {
-			alert('CHANGED!', e.target?.value);
+			alert(`CHANGED! checked=${(e.target as HTMLInputElement).checked}`);
 		}
 	}}
 />
