@@ -9,6 +9,8 @@
     "dev": "turbo run dev --ui tui",
     "build": "turbo run build",
     "check": "turbo run check",
+    "typecheck": "turbo run typecheck",
+    "bench:typecheck": "node scripts/bench-typecheck.mjs",
     "test": "turbo run test",
     "e2e": "turbo run e2e:ci",
     "lint": "biome ci"
@@ -17,6 +19,18 @@
     "onlyBuiltDependencies": [
       "esbuild",
       "@tailwindcss/oxide"
-    ]
+    ],
+    "packageExtensions": {
+      "@sveltejs/kit": {
+        "peerDependencies": {
+          "typescript": "^5.0.0"
+        },
+        "peerDependenciesMeta": {
+          "typescript": {
+            "optional": true
+          }
+        }
+      }
+    }
   }
 }

@@ -93,9 +93,9 @@ jobs:
       - name: Lint & format
         run: pnpm biome ci
 
-      - name: Typecheck · unit test · build — affected
+      - name: Typecheck (TS 7) · check · unit test · build — affected
         run: >
-          pnpm turbo run check test build
+          pnpm turbo run typecheck check test build
           --filter="...[${{ steps.affected.outputs.base }}]"
 
       # ── Non-gating: known pre-existing failures, tracked for promotion ─────
