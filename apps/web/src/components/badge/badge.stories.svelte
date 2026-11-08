@@ -12,25 +12,48 @@ const { Story } = defineMeta({
 </script>
 
 {#snippet template()}
-  38
+  3
 {/snippet}
 
+<!--
+  The default Badge matches the Figma "Badge" component: a neutral count pill with
+  a slate surface in light mode and a dark canvas surface in dark mode.
+ -->
 <Story name="Default" />
 
-<!-- 
-  There are a handful of variants that the badge can make for itself.
+<!--
+  Semantic variants. Colours are resolved with `light-dark()` so each adapts to the
+  active theme automatically.
  -->
 <Story name="Variants">
   {#snippet template(args)}
-    <Badge variant={args.variant}>
-      37
-    </Badge>
+    <div class="flex gap-2">
+      <Badge>3</Badge>
+      <Badge variant="success">+12</Badge>
+      <Badge variant="error">4</Badge>
+    </div>
   {/snippet}
 </Story>
 
-<!-- 
-  You can pass in custom colors using the `--background-color` and `--text-color`
-  properties respectively
+<!--
+  Figma ships Theme=Light and Theme=Dark symbols. Rather than a `theme` prop, the
+  component leans on `light-dark()`; forcing `color-scheme` shows both at once.
+ -->
+<Story name="Themes">
+  {#snippet template(args)}
+    <div class="flex gap-4">
+      <div style="color-scheme: light" class="rounded bg-white p-4">
+        <Badge>3</Badge>
+      </div>
+      <div style="color-scheme: dark" class="rounded bg-zinc-900 p-4">
+        <Badge>3</Badge>
+      </div>
+    </div>
+  {/snippet}
+</Story>
+
+<!--
+  Custom colours via the `--background-color` / `--text-color` custom properties.
  -->
 <Story name="Custom Colors">
   {#snippet template(args)}
@@ -40,9 +63,8 @@ const { Story } = defineMeta({
   {/snippet}
 </Story>
 
-<!-- 
-  The Badge component accepts a class, which allows you to override the classes 
-  applied for padding and text sizing.
+<!--
+  The `class` prop overrides the default padding / sizing.
  -->
 <Story name="Sizing mods">
   {#snippet template(args)}
