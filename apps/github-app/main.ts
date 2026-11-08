@@ -1,12 +1,12 @@
 import 'dotenv/config';
 import { readFile } from 'node:fs/promises';
-import SmeeClient from 'smee-client';
 import { serve } from '@hono/node-server';
 import { createDb, pullRequests, stackMembers } from '@lythium/db';
 import { App } from '@octokit/app';
 import type { EmitterWebhookEventName } from '@octokit/webhooks';
 import { and, eq } from 'drizzle-orm';
 import { Hono } from 'hono';
+import SmeeClient from 'smee-client';
 import { parseStackSection } from './lib/parser.ts';
 
 const IS_DEV = process.env.NODE_ENV !== 'production';
@@ -127,7 +127,6 @@ export type AppType = typeof honoApp;
 
 const port = Number(process.env.PORT ?? 3001);
 if (IS_DEV && import.meta.main) {
-
   const smee = new SmeeClient({
     // biome-ignore lint/style/noNonNullAssertion: it's either going to be set or it won't work
     source: SMEE_PROXY!,
