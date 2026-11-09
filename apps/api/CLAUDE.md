@@ -14,16 +14,17 @@ Guidance for Claude Code when working in `apps/api`. See the repo-root `CLAUDE.m
 pnpm --filter @lythium/api dev     # deno run --watch -N main.ts
 ```
 
-`-N` grants network access (GitHub API + the HTTP listener). The server only starts when `main.ts` is the entry module (`Deno.mainModule === import.meta.url`); importing it (e.g. from tests or an RPC client) does not bind a port.
+`-N` grants network access (GitHub API + the HTTP listener). The server only starts when `main.ts` is the entry module (`Deno.mainModule === import.meta.url`); the Hono `app` lives in `app.ts` (importable from tests without binding a port) and `main.ts` only starts the server.
 
-Run `pnpm biome ci` from the repo root for lint/format. There is no test suite here yet.
+Run `pnpm biome ci` from the repo root for lint/format. Tests: `pnpm --filter @lythium/api test` (Vitest; GitHub is stubbed via `fetch`).
 
 # Architecture
 
-Single endpoint:
+Endpoints:
 
 ```
 GET /repos/:owner/:repo/pr/:pr_number/diff
+GET /repos/:owner/:repo/pr/:pr_number        # PR details + merge status (pr-details.ts)
 ```
 
 - **Auth**: the caller's GitHub token is passed through as `Authorization: Bearer <token>`. The service has **no** credentials of its own — every GitHub call uses the caller's token. Missing/malformed header → 401.
