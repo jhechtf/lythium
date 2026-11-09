@@ -18,7 +18,8 @@ program
   .description('Amend the current branch and automatically restack children')
   .option('-a, --all', 'stage all working changes')
   .option('-m, --message <msg>', 'new commit message (omit to keep current)')
-  .action(async (opts: { all?: boolean; message?: string }) => {
+  .option('--no-sign', 'commit without signing')
+  .action(async (opts: { all?: boolean; message?: string; sign?: boolean }) => {
     try {
       const store = load();
 
@@ -53,7 +54,7 @@ program
         process.exit(1);
       }
 
-      amendCommit(opts.message);
+      amendCommit(opts.message, opts.sign === false);
 
       const descendants = getAllDescendants(store, branch);
       if (descendants.length > 0) {

@@ -1,3 +1,5 @@
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createTempRepo, createUninitializedRepo } from './helpers/repo.ts';
 
@@ -32,6 +34,47 @@ describe('ly create', () => {
     const { ly } = createUninitializedRepo();
     const result = ly(['create', 'feat/x', '--message', 'msg']);
     expect(result.status).toBe(1);
+  });
+
+  it('--no-sign bypasses a commit.gpgsign config that would otherwise fail', () => {
+    const { ly, git } = createTempRepo();
+    git('config commit.gpgsign true');
+    git('config gpg.program does-not-exist-gpg');
+
+    const failed = ly(['create', 'feat/a', '--message', 'feat: a']);
+    expect(failed.status).not.toBe(0);
+    // Failed commit rolls back: original branch restored, new branch removed
+    expect(git('branch --show-current')).not.toBe('feat/a');
+    expect(git('branch --list feat/a')).toBe('');
+
+    const result = ly([
+      'create',
+      'feat/b',
+      '--no-sign',
+      '--message',
+      'feat: b',
+    ]);
+    expect(result.status).toBe(0);
+    expect(git('log -1 --format=%s')).toBe('feat: b');
+  });
+});
+
+describe('ly modify', () => {
+  it('--no-sign bypasses a commit.gpgsign config that would otherwise fail', () => {
+    const { ly, git, dir } = createTempRepo();
+    ly(['create', 'feat/a', '--message', 'feat: a']);
+    writeFileSync(join(dir, 'file.txt'), 'content');
+    git('add file.txt');
+
+    git('config commit.gpgsign true');
+    git('config gpg.program does-not-exist-gpg');
+
+    const failed = ly(['modify']);
+    expect(failed.status).not.toBe(0);
+
+    const result = ly(['modify', '--no-sign']);
+    expect(result.status).toBe(0);
+    expect(git('show --stat -1')).toContain('file.txt');
   });
 });
 

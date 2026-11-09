@@ -2,10 +2,12 @@ import { cancel, intro, isCancel, outro, text } from '@clack/prompts';
 import { program } from 'commander';
 import pc from 'picocolors';
 import {
+  checkout,
   commit,
   commitEmpty,
   createBranch,
   currentBranch,
+  deleteBranch,
   hasStagedChanges,
   stageAll,
 } from '../git.ts';
@@ -17,10 +19,11 @@ program
   .argument('[branch]', 'new branch name')
   .option('-a, --all', 'stage all working changes before creating')
   .option('-m, --message <msg>', 'commit message')
+  .option('--no-sign', 'commit without signing')
   .action(
     async (
       branchArg: string | undefined,
-      opts: { all?: boolean; message?: string },
+      opts: { all?: boolean; message?: string; sign?: boolean },
     ) => {
       intro(pc.bold('ly create'));
 
@@ -86,11 +89,27 @@ program
         }
       }
 
+      const noSign = opts.sign === false;
+
       createBranch(branchName, parent);
-      if (isEmpty) {
-        commitEmpty(message);
-      } else {
-        commit(message);
+      try {
+        if (isEmpty) {
+          commitEmpty(message, noSign);
+        } else {
+          commit(message, noSign);
+        }
+      } catch (e) {
+        // Roll back so a retry (e.g. with --no-sign) can reuse the branch name.
+        // The new branch has no commits yet, so checking out the parent keeps
+        // any staged changes intact.
+        try {
+          checkout(parent);
+          deleteBranch(branchName, true);
+        } catch {
+          // Best effort; surface the original commit failure below.
+        }
+        cancel(e instanceof Error ? e.message : String(e));
+        process.exit(1);
       }
 
       store.branches[branchName] = { parent };
