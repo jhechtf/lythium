@@ -8,7 +8,8 @@
   "scripts": {
     "dev": "tsx watch main.ts",
     "build": "tsdown main.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
@@ -18,6 +19,7 @@
     "@types/node": "^24.0.0",
     "tsdown": "^0.12.5",
     "tsx": "^4.19.4",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^3.0.0"
   }
 }

@@ -6,7 +6,5 @@
     "$*/": "${workspaceRoot}/packages/$1/"
   },
   "editor.defaultFormatter": "biomejs.biome",
-  "biome.enabled": true,
-  "deno.enable": true,
-  "deno.enablePaths": ["./apps/api/"]
+  "biome.enabled": true
 }

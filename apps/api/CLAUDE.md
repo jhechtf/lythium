@@ -4,27 +4,29 @@ Guidance for Claude Code when working in `apps/api`. See the repo-root `CLAUDE.m
 
 # What this is
 
-`@lythium/api` — a small Deno + Hono HTTP service that reconstructs a stacked-PR chain from GitHub and returns the combined diff for the web app to render.
+`@lythium/api` — a small Node + Hono HTTP service that reconstructs a stacked-PR chain from GitHub and returns the combined diff for the web app to render.
 
-**Runtime is Deno, not Node.** No build step, no `node_modules`, no `dist/`. Dependencies resolve from `deno.lock` and npm specifiers in `main.ts`. `.vscode/settings.json` scopes the Deno language server to this directory only — keep Deno-specific code inside `apps/api`.
+**Runtime is Node** (it was Deno until #18). Served with `@hono/node-server`; `tsx` for dev, `tsdown` for the build, Vitest for tests. The Hono `app` lives in `app.ts` (importable from tests without binding a port) and `main.ts` only starts the server (port from `PORT`, default 3000).
 
 # Commands
 
 ```
-pnpm --filter @lythium/api dev     # deno run --watch -N main.ts
+pnpm --filter @lythium/api dev     # tsx watch main.ts
+pnpm --filter @lythium/api build   # tsdown main.ts
 ```
 
-`-N` grants network access (GitHub API + the HTTP listener). The server only starts when `main.ts` is the entry module (`Deno.mainModule === import.meta.url`); importing it (e.g. from tests or an RPC client) does not bind a port.
-
-Run `pnpm biome ci` from the repo root for lint/format. There is no test suite here yet.
+Run `pnpm biome ci` from the repo root for lint/format. Tests: `pnpm --filter @lythium/api test` (Vitest; GitHub is stubbed via `fetch`).
 
 # Architecture
 
-Single endpoint:
+Endpoints:
 
 ```
-GET /repos/:owner/:repo/pr/:pr_number/diff
+GET /repos/:source/:owner/:repo/pr/:pr_number/diff
+GET /repos/:source/:owner/:repo/pr/:pr_number        # PR details + merge status (pr-details.ts)
 ```
+
+- **`:source`** is the hosting platform. Only `github` is implemented; any other value → 400 `{ error, supported }`. GitLab (and maybe Forgejo) are planned, so keep platform-specific calls behind the `githubFetch` boundary.
 
 - **Auth**: the caller's GitHub token is passed through as `Authorization: Bearer <token>`. The service has **no** credentials of its own — every GitHub call uses the caller's token. Missing/malformed header → 401.
 - **Stack reconstruction**: starting from the requested PR, walk *up* the stack by treating each PR's `base.ref` as the head of its parent PR and searching open PRs for it. Stops when no parent PR is found or at `MAX_STACK_DEPTH` (20). The `prs` array is kept bottom-to-top (`unshift` parents).

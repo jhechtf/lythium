@@ -33,7 +33,7 @@ The user's access token lives in a `token` cookie. `src/hooks.server.ts` reads i
 
 # Routes
 
-- `/pr/[owner]/[repo]/[number]` — the stacked-diff view. `+page.server.ts` calls `${API_URL}/repos/{owner}/{repo}/pr/{number}/diff`, mapping API 401/404/429/other to SvelteKit `error()`. `+page.svelte` renders a `FileTree`, a card + `DiffViewer` per PR in the stack, and a stack sidebar.
+- `/pr/[owner]/[repo]/[number]` — the stacked-diff view. `+page.server.ts` calls `${API_URL}/repos/github/{owner}/{repo}/pr/{number}/diff` (source hard-coded to `github` for now), mapping API 401/404/429/other to SvelteKit `error()`. `+page.svelte` renders a `FileTree`, a card + `DiffViewer` per PR in the stack, and a stack sidebar.
 - Response types come from the API package: `import type { StackDiffResponse } from '@lythium/api/types'`.
 
 Some route files (`/+page.server.ts`, `/auth/github/callback`) are still scaffolding — hard-coded repos, `console.info` debugging. Don't copy those as patterns.
