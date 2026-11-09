@@ -184,19 +184,22 @@ export function hasWorkingChanges(): boolean {
   }
 }
 
-export function commit(message: string): void {
-  git(`commit -m ${JSON.stringify(message)}`);
+export function commit(message: string, noSign = false): void {
+  const sign = noSign ? ' --no-gpg-sign' : '';
+  git(`commit${sign} -m ${JSON.stringify(message)}`);
 }
 
-export function commitEmpty(message: string): void {
-  git(`commit --allow-empty -m ${JSON.stringify(message)}`);
+export function commitEmpty(message: string, noSign = false): void {
+  const sign = noSign ? ' --no-gpg-sign' : '';
+  git(`commit --allow-empty${sign} -m ${JSON.stringify(message)}`);
 }
 
-export function amendCommit(message?: string): void {
+export function amendCommit(message?: string, noSign = false): void {
+  const sign = noSign ? ' --no-gpg-sign' : '';
   if (message) {
-    git(`commit --amend -m ${JSON.stringify(message)}`);
+    git(`commit --amend${sign} -m ${JSON.stringify(message)}`);
   } else {
-    git('commit --amend --no-edit');
+    git(`commit --amend${sign} --no-edit`);
   }
 }
 

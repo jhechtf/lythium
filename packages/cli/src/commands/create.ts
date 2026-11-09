@@ -17,10 +17,11 @@ program
   .argument('[branch]', 'new branch name')
   .option('-a, --all', 'stage all working changes before creating')
   .option('-m, --message <msg>', 'commit message')
+  .option('--no-sign', 'commit without signing')
   .action(
     async (
       branchArg: string | undefined,
-      opts: { all?: boolean; message?: string },
+      opts: { all?: boolean; message?: string; sign?: boolean },
     ) => {
       intro(pc.bold('ly create'));
 
@@ -86,11 +87,13 @@ program
         }
       }
 
+      const noSign = opts.sign === false;
+
       createBranch(branchName, parent);
       if (isEmpty) {
-        commitEmpty(message);
+        commitEmpty(message, noSign);
       } else {
-        commit(message);
+        commit(message, noSign);
       }
 
       store.branches[branchName] = { parent };

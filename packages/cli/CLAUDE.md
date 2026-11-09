@@ -40,12 +40,12 @@ Built with Commander. Each subcommand is a module under `src/commands/` that cal
 
 - `ly init` — records `trunk` (auto-detects `main`/`master`, else prompts), creates the store. Refuses if already initialized or not a git repo.
 - `ly log` — the **default** command (bare `ly`); renders the stack tree. `-s/--short` shows only the current lineage.
-- `ly create [branch]` — new branch stacked on current HEAD; commits staged changes, or makes an empty commit if nothing is staged; records `parent`.
+- `ly create [branch]` — new branch stacked on current HEAD; commits staged changes, or makes an empty commit if nothing is staged; records `parent`. `--no-sign` skips commit signing (bypasses `commit.gpgsign`).
 - `ly track [branch]` — start tracking an existing branch; prompts for its parent.
 - `ly untrack [branch]` — drop a branch from the store (warns about orphaned children; does not touch git).
 - `ly checkout [branch]` (alias `ly co`) — switch to a tracked branch; interactive picker when no arg.
 - `ly up` / `ly down` — move to a child (prompts if several) / to the parent branch.
-- `ly modify` — amends the current branch, then restacks all descendants automatically (`forceRebase` each, then return to the branch).
+- `ly modify` — amends the current branch, then restacks all descendants automatically (`forceRebase` each, then return to the branch). Also accepts `--no-sign`.
 - `ly restack` — rebases descendants onto their recorded parents to repair alignment. `--all` does every tracked branch.
 - `ly submit` — two phases: (1) push each target branch and create/update its PR so all PR numbers are known, saving the store after each; (2) rewrite every target PR body's stack section so they cross-link. `--stack` submits the whole stack; `--draft`, `--title`, `--body` as expected.
 - `ly sync` — fetch; fast-forward local trunk (**aborts** if trunk can't fast-forward — a stale trunk would corrupt the restack); detect branches merged into `origin/<trunk>`; prompt to delete them, reparenting their children to the deleted branch's parent; restack everything else. `--rebuild` first reconstructs the store from open PRs' stack sections (use when moving to a new machine).
