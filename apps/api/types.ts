@@ -60,6 +60,8 @@ export type MergeBlockReason =
   | 'draft'
   | 'closed'
   | 'conflicts'
+  /** GitHub hasn't finished computing mergeability yet (`mergeable: null`). */
+  | 'mergeability_unknown'
   | 'failing_checks'
   | 'pending_reviews'
   | 'changes_requested'

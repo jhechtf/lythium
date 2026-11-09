@@ -68,8 +68,9 @@ export function mapState(pr: GithubPRFull): PRState {
 /**
  * Collapse review history into one state per reviewer. Later APPROVED /
  * CHANGES_REQUESTED reviews replace earlier ones; COMMENTED never overrides
- * a decision; DISMISSED clears it. Reviewers who were requested but have not
- * reviewed are `in_review`.
+ * a decision and DISMISSED clears it. Only reviewers with an active review
+ * request are `in_review`, so someone who merely commented (or whose review
+ * was dismissed) is not reported as pending.
  */
 export function mapReviewers(
   reviews: GithubReview[],
@@ -90,11 +91,9 @@ export function mapReviewers(
         byLogin.set(login, 'changes_requested');
         break;
       case 'DISMISSED':
-        byLogin.set(login, 'in_review');
+        byLogin.delete(login);
         break;
-      case 'COMMENTED':
-        if (!byLogin.has(login)) byLogin.set(login, 'in_review');
-        break;
+      // COMMENTED carries no decision: ignore it.
     }
   }
   // A re-request puts the reviewer back in review regardless of prior state.
@@ -135,9 +134,17 @@ export function computeMergeStatus(input: {
   if (pr.mergeable === false || pr.mergeable_state === 'dirty') {
     blocked_by.push({ reason: 'conflicts' });
   }
-  const failing = (checks ?? []).filter(
-    (c) => c.conclusion && FAILING_CONCLUSIONS.has(c.conclusion),
-  );
+  // GitHub is still computing mergeability; don't claim the PR is mergeable.
+  if (pr.mergeable === null)
+    blocked_by.push({ reason: 'mergeability_unknown' });
+  // `unstable` means only non-required checks are failing, so the merge is
+  // still allowed. Skip them rather than reporting a false blocker.
+  const failing =
+    pr.mergeable_state === 'unstable'
+      ? []
+      : (checks ?? []).filter(
+          (c) => c.conclusion && FAILING_CONCLUSIONS.has(c.conclusion),
+        );
   if (failing.length > 0) {
     blocked_by.push({
       reason: 'failing_checks',

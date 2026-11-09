@@ -69,6 +69,30 @@ function shapePR(pr: GithubPR): StackPR {
 
 type FetchResult = Awaited<ReturnType<typeof githubFetch>>;
 
+const PAGE_SIZE = 100;
+const MAX_PAGES = 10;
+
+/** Fetch every page of a list endpoint (a full page means there may be more). */
+async function githubFetchAll<T>(
+  path: string,
+  token: string,
+  pick: (data: unknown) => T[],
+): Promise<{ ok: true; items: T[] } | { ok: false; result: FetchResult }> {
+  const sep = path.includes('?') ? '&' : '?';
+  const items: T[] = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const result = await githubFetch(
+      `${path}${sep}per_page=${PAGE_SIZE}&page=${page}`,
+      token,
+    );
+    if (!result.ok) return { ok: false, result };
+    const batch = pick(result.data);
+    items.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+  }
+  return { ok: true, items };
+}
+
 function upstreamError(c: Context, result: FetchResult, prNumber: string) {
   if (result.status === 401)
     return c.json({ error: 'GitHub authentication failed' }, 401);
@@ -76,6 +100,7 @@ function upstreamError(c: Context, result: FetchResult, prNumber: string) {
     return c.json({ error: `PR #${prNumber} not found` }, 404);
   if (result.status === 403 || result.status === 429) {
     const retryAfter = result.headers.get('Retry-After');
+    if (retryAfter) c.header('Retry-After', retryAfter);
     return c.json({ error: 'GitHub rate limit exceeded', retryAfter }, 429);
   }
   return c.json({ error: 'GitHub API error' }, 502);
@@ -97,7 +122,7 @@ function unsupportedSource(c: Context, source: string) {
 }
 
 export const app = new Hono()
-  .use('*', cors())
+  .use('*', cors({ origin: '*', exposeHeaders: ['Retry-After'] }))
   .get('/repos/:source/:owner/:repo/pr/:pr_number/diff', async (c) => {
     const badSource = unsupportedSource(c, c.req.param('source'));
     if (badSource) return badSource;
@@ -196,35 +221,45 @@ export const app = new Hono()
     if (!prResult.ok) return upstreamError(c, prResult, pr_number);
     const pr = prResult.data as GithubPRFull;
 
+    // Optional lookups must never fail the request, even on network errors.
+    const optional = <T>(p: Promise<T>) => p.catch(() => null);
+
     const [reviewsResult, commitResult, checksResult, parentResult] =
       await Promise.all([
-        githubFetch(`${base}/pulls/${pr_number}/reviews?per_page=100`, token),
+        githubFetchAll<GithubReview>(
+          `${base}/pulls/${pr_number}/reviews`,
+          token,
+          (d) => (Array.isArray(d) ? d : []),
+        ),
         // `commits` is capped at 250; page size 1 on the last page = newest.
         githubFetch(
           `${base}/pulls/${pr_number}/commits?per_page=1&page=${Math.min(Math.max(pr.commits ?? 1, 1), 250)}`,
           token,
         ),
-        githubFetch(
-          `${base}/commits/${pr.head.sha}/check-runs?per_page=100`,
-          token,
+        optional(
+          githubFetchAll<GithubCheckRun>(
+            `${base}/commits/${pr.head.sha}/check-runs`,
+            token,
+            (d) => (d as { check_runs?: GithubCheckRun[] }).check_runs ?? [],
+          ),
         ),
-        githubFetch(
-          `${base}/pulls?head=${encodeURIComponent(owner)}:${encodeURIComponent(pr.base.ref)}&state=open`,
-          token,
+        optional(
+          githubFetch(
+            `${base}/pulls?head=${encodeURIComponent(owner)}:${encodeURIComponent(pr.base.ref)}&state=open`,
+            token,
+          ),
         ),
       ]);
 
-    if (!reviewsResult.ok) return upstreamError(c, reviewsResult, pr_number);
+    if (!reviewsResult.ok)
+      return upstreamError(c, reviewsResult.result, pr_number);
     if (!commitResult.ok) return upstreamError(c, commitResult, pr_number);
 
     // Checks and parent lookup degrade gracefully: a token without checks
     // access shouldn't make the whole PR unreadable.
-    const checks = checksResult.ok
-      ? ((checksResult.data as { check_runs?: GithubCheckRun[] }).check_runs ??
-        [])
-      : null;
+    const checks = checksResult?.ok ? checksResult.items : null;
     const parentList =
-      parentResult.ok && Array.isArray(parentResult.data)
+      parentResult?.ok && Array.isArray(parentResult.data)
         ? (parentResult.data as { number: number }[])
         : [];
     // Only a still-open parent blocks; merged parents aren't returned by state=open.
@@ -234,7 +269,7 @@ export const app = new Hono()
     return c.json<PRDetailsResponse>(
       buildPRDetails({
         pr,
-        reviews: reviewsResult.data as GithubReview[],
+        reviews: reviewsResult.items,
         latestCommit: (commitResult.data as GithubCommit[])[0],
         checks,
         parentPr,

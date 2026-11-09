@@ -54,6 +54,18 @@ describe('mapReviewers', () => {
     expect(out).toEqual([{ login: 'bob', state: 'approved' }]);
   });
 
+  it('does not report commenters or dismissed reviewers as pending', () => {
+    const out = mapReviewers(
+      [
+        { user: { login: 'eve' }, state: 'COMMENTED', submitted_at: '1' },
+        { user: { login: 'bob' }, state: 'APPROVED', submitted_at: '1' },
+        { user: { login: 'bob' }, state: 'DISMISSED', submitted_at: '2' },
+      ],
+      [],
+    );
+    expect(out).toEqual([]);
+  });
+
   it('puts re-requested reviewers back in review', () => {
     const out = mapReviewers(
       [{ user: { login: 'bob' }, state: 'APPROVED', submitted_at: '1' }],
@@ -121,6 +133,23 @@ describe('buildPRDetails', () => {
       { reason: 'pending_reviews', detail: 'dan' },
       { reason: 'blocked_by_parent', detail: '#5' },
     ]);
+  });
+
+  it('does not call a PR mergeable while GitHub is still computing', () => {
+    const d = run(basePR({ mergeable: null, mergeable_state: 'unknown' }));
+    expect(d.merge).toEqual({
+      mergeable: false,
+      blocked_by: [{ reason: 'mergeability_unknown' }],
+    });
+  });
+
+  it('ignores failing checks when GitHub says the PR is unstable', () => {
+    const d = run(basePR({ mergeable_state: 'unstable' }), {
+      checks: [
+        { name: 'optional', status: 'completed', conclusion: 'failure' },
+      ],
+    });
+    expect(d.merge).toEqual({ mergeable: true, blocked_by: [] });
   });
 
   it('reports conflicts and unexplained branch protection', () => {
@@ -208,6 +237,71 @@ describe('GET /repos/:source/:owner/:repo/pr/:pr_number', () => {
     });
     const res = await get();
     expect(res.status).toBe(200);
+  });
+
+  it('survives network failures on optional lookups', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const path = new URL(url).pathname;
+        if (path.endsWith('/check-runs')) throw new Error('network down');
+        if (path.endsWith('/pulls')) return json('not json{', 200);
+        if (path.endsWith('/pulls/7')) return json(basePR());
+        if (path.endsWith('/reviews')) return json([]);
+        if (path.endsWith('/commits')) return json([commit]);
+        return json({}, 404);
+      }),
+    );
+    expect((await get()).status).toBe(200);
+  });
+
+  it('fetches every page of reviews', async () => {
+    const page = (n: number) =>
+      Array.from({ length: 100 }, (_, i) => ({
+        user: { login: `u${n}-${i}` },
+        state: 'APPROVED',
+        submitted_at: String(n),
+      }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const u = new URL(url);
+        if (u.pathname.endsWith('/pulls/7')) return json(basePR());
+        if (u.pathname.endsWith('/reviews'))
+          return json(
+            u.searchParams.get('page') === '1'
+              ? page(1)
+              : [
+                  {
+                    user: { login: 'last' },
+                    state: 'APPROVED',
+                    submitted_at: '2',
+                  },
+                ],
+          );
+        if (u.pathname.endsWith('/commits')) return json([commit]);
+        if (u.pathname.endsWith('/check-runs')) return json({ check_runs: [] });
+        return json([]);
+      }),
+    );
+    const body = (await (await get()).json()) as {
+      reviewers: { login: string }[];
+    };
+    expect(body.reviewers).toHaveLength(101);
+    expect(body.reviewers[100]?.login).toBe('last');
+  });
+
+  it('forwards Retry-After on rate limiting', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('{}', { status: 429, headers: { 'Retry-After': '30' } }),
+      ),
+    );
+    const res = await get();
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('30');
   });
 
   it.each([
