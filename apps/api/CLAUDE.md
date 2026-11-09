@@ -4,17 +4,16 @@ Guidance for Claude Code when working in `apps/api`. See the repo-root `CLAUDE.m
 
 # What this is
 
-`@lythium/api` — a small Deno + Hono HTTP service that reconstructs a stacked-PR chain from GitHub and returns the combined diff for the web app to render.
+`@lythium/api` — a small Node + Hono HTTP service that reconstructs a stacked-PR chain from GitHub and returns the combined diff for the web app to render.
 
-**Runtime is Deno, not Node.** No build step, no `node_modules`, no `dist/`. Dependencies resolve from `deno.lock` and npm specifiers in `main.ts`. `.vscode/settings.json` scopes the Deno language server to this directory only — keep Deno-specific code inside `apps/api`.
+**Runtime is Node** (it was Deno until #18). Served with `@hono/node-server`; `tsx` for dev, `tsdown` for the build, Vitest for tests. The Hono `app` lives in `app.ts` (importable from tests without binding a port) and `main.ts` only starts the server (port from `PORT`, default 3000).
 
 # Commands
 
 ```
-pnpm --filter @lythium/api dev     # deno run --watch -N main.ts
+pnpm --filter @lythium/api dev     # tsx watch main.ts
+pnpm --filter @lythium/api build   # tsdown main.ts
 ```
-
-`-N` grants network access (GitHub API + the HTTP listener). The server only starts when `main.ts` is the entry module (`Deno.mainModule === import.meta.url`); the Hono `app` lives in `app.ts` (importable from tests without binding a port) and `main.ts` only starts the server.
 
 Run `pnpm biome ci` from the repo root for lint/format. Tests: `pnpm --filter @lythium/api test` (Vitest; GitHub is stubbed via `fetch`).
 

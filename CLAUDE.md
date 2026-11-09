@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Lythium ("Stacks, Opened Up") is an open-source, git-compatible stacked-diff workflow, in the spirit of Graphite. It has three parts that share one data model — a chain of branches where each branch's parent is another branch or trunk:
 
 - `packages/cli` — the `ly` CLI, the tool developers use to build and submit stacks
-- `apps/api` — a Deno/Hono service that reconstructs a PR stack from GitHub and returns its combined diff
+- `apps/api` — a Node/Hono service that reconstructs a PR stack from GitHub and returns its combined diff
 - `apps/web` — a SvelteKit app that renders that stacked diff for review
 
 The CLI and the web/API side are largely independent: the CLI never talks to the API, and the API rebuilds stack structure from GitHub rather than from the CLI's local store.

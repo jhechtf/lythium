@@ -1,3 +1,3 @@
 ```
-deno task start
+pnpm --filter @lythium/api dev
 ```
