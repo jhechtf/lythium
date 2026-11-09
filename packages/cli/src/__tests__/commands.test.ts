@@ -43,6 +43,9 @@ describe('ly create', () => {
 
     const failed = ly(['create', 'feat/a', '--message', 'feat: a']);
     expect(failed.status).not.toBe(0);
+    // Failed commit rolls back: original branch restored, new branch removed
+    expect(git('branch --show-current')).not.toBe('feat/a');
+    expect(git('branch --list feat/a')).toBe('');
 
     const result = ly([
       'create',

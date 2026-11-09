@@ -2,10 +2,12 @@ import { cancel, intro, isCancel, outro, text } from '@clack/prompts';
 import { program } from 'commander';
 import pc from 'picocolors';
 import {
+  checkout,
   commit,
   commitEmpty,
   createBranch,
   currentBranch,
+  deleteBranch,
   hasStagedChanges,
   stageAll,
 } from '../git.ts';
@@ -90,10 +92,24 @@ program
       const noSign = opts.sign === false;
 
       createBranch(branchName, parent);
-      if (isEmpty) {
-        commitEmpty(message, noSign);
-      } else {
-        commit(message, noSign);
+      try {
+        if (isEmpty) {
+          commitEmpty(message, noSign);
+        } else {
+          commit(message, noSign);
+        }
+      } catch (e) {
+        // Roll back so a retry (e.g. with --no-sign) can reuse the branch name.
+        // The new branch has no commits yet, so checking out the parent keeps
+        // any staged changes intact.
+        try {
+          checkout(parent);
+          deleteBranch(branchName, true);
+        } catch {
+          // Best effort; surface the original commit failure below.
+        }
+        cancel(e instanceof Error ? e.message : String(e));
+        process.exit(1);
       }
 
       store.branches[branchName] = { parent };
