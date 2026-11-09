@@ -23,9 +23,11 @@ Run `pnpm biome ci` from the repo root for lint/format. Tests: `pnpm --filter @l
 Endpoints:
 
 ```
-GET /repos/:owner/:repo/pr/:pr_number/diff
-GET /repos/:owner/:repo/pr/:pr_number        # PR details + merge status (pr-details.ts)
+GET /repos/:source/:owner/:repo/pr/:pr_number/diff
+GET /repos/:source/:owner/:repo/pr/:pr_number        # PR details + merge status (pr-details.ts)
 ```
+
+- **`:source`** is the hosting platform. Only `github` is implemented; any other value → 400 `{ error, supported }`. GitLab (and maybe Forgejo) are planned, so keep platform-specific calls behind the `githubFetch` boundary.
 
 - **Auth**: the caller's GitHub token is passed through as `Authorization: Bearer <token>`. The service has **no** credentials of its own — every GitHub call uses the caller's token. Missing/malformed header → 401.
 - **Stack reconstruction**: starting from the requested PR, walk *up* the stack by treating each PR's `base.ref` as the head of its parent PR and searching open PRs for it. Stops when no parent PR is found or at `MAX_STACK_DEPTH` (20). The `prs` array is kept bottom-to-top (`unshift` parents).

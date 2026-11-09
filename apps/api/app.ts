@@ -81,9 +81,26 @@ function upstreamError(c: Context, result: FetchResult, prNumber: string) {
   return c.json({ error: 'GitHub API error' }, 502);
 }
 
+// Hosting platforms we can talk to. `:source` in the URL selects one; only
+// GitHub has an implementation today (GitLab / Forgejo are planned).
+const SUPPORTED_SOURCES = ['github'] as const;
+
+function unsupportedSource(c: Context, source: string) {
+  if ((SUPPORTED_SOURCES as readonly string[]).includes(source)) return null;
+  return c.json(
+    {
+      error: `Unsupported source '${source}'`,
+      supported: SUPPORTED_SOURCES,
+    },
+    400,
+  );
+}
+
 export const app = new Hono()
   .use('*', cors())
-  .get('/repos/:owner/:repo/pr/:pr_number/diff', async (c) => {
+  .get('/repos/:source/:owner/:repo/pr/:pr_number/diff', async (c) => {
+    const badSource = unsupportedSource(c, c.req.param('source'));
+    if (badSource) return badSource;
     const authHeader = c.req.header('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return c.json({ error: 'Missing or invalid Authorization header' }, 401);
@@ -164,7 +181,9 @@ export const app = new Hono()
 
     return c.json<StackDiffResponse>({ stack });
   })
-  .get('/repos/:owner/:repo/pr/:pr_number', async (c) => {
+  .get('/repos/:source/:owner/:repo/pr/:pr_number', async (c) => {
+    const badSource = unsupportedSource(c, c.req.param('source'));
+    if (badSource) return badSource;
     const authHeader = c.req.header('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return c.json({ error: 'Missing or invalid Authorization header' }, 401);

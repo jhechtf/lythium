@@ -134,7 +134,7 @@ describe('buildPRDetails', () => {
   });
 });
 
-describe('GET /repos/:owner/:repo/pr/:pr_number', () => {
+describe('GET /repos/:source/:owner/:repo/pr/:pr_number', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   const json = (data: unknown, status = 200) =>
@@ -158,11 +158,19 @@ describe('GET /repos/:owner/:repo/pr/:pr_number', () => {
 
   const get = (
     headers: Record<string, string> = { Authorization: 'Bearer t' },
-  ) => app.request('/repos/o/r/pr/7', { headers });
+  ) => app.request('/repos/github/o/r/pr/7', { headers });
 
   it('401s without a bearer token', async () => {
     const res = await get({});
     expect(res.status).toBe(401);
+  });
+
+  it('400s for an unsupported source', async () => {
+    const res = await app.request('/repos/gitlab/o/r/pr/7', {
+      headers: { Authorization: 'Bearer t' },
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ supported: ['github'] });
   });
 
   it('returns details and forwards the caller token', async () => {

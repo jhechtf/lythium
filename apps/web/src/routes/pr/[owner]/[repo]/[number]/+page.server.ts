@@ -10,7 +10,7 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
   const { owner, repo, number } = params;
 
   const res = await fetch(
-    `${API_URL}/repos/${owner}/${repo}/pr/${number}/diff`,
+    `${API_URL}/repos/github/${owner}/${repo}/pr/${number}/diff`,
     {
       headers: { Authorization: `Bearer ${token}` },
     },
