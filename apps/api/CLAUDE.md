@@ -37,6 +37,20 @@ GET /repos/:source/:owner/:repo/pr/:pr_number        # PR details + merge status
 
 `export type AppType = typeof app` is exported for a potential Hono RPC client.
 
+# Guided-review state (LYT-60)
+
+Guided review needs state GitHub doesn't hold: review groups, which groups a reviewer marked reviewed, and which files they viewed. Decisions:
+
+- **Storage**: Postgres via `@lythium/db` (Drizzle), the same schema and database as the GitHub App's webhook tables. Tables: `review_groups`, `review_group_files` (path + optional new-file line range), `review_group_reviews`, `review_viewed_files`. Data access lives in `packages/db/src/review-state.ts`; tests run the real migrations on PGlite (in-process Postgres, no Docker).
+- **One copy of drizzle-orm**: apps import query operators (`and`, `eq`, …) from `@lythium/db`, never from `drizzle-orm` directly. A second copy (pnpm makes one per peer set, e.g. with PGlite) makes Drizzle's types incompatible.
+- **Identity**: keyed by the GitHub numeric user id from `GET /user` with the caller's token (`fetchViewer` in `review-context.ts`). Logins can be renamed, so they aren't keys. Tokens are never stored.
+- **Sharing**: groups are shared on the PR (the author or AI clustering can set them up once for every reviewer). Reviewed and viewed marks are private per user.
+- **New push**: everything is pinned to the PR head sha it was made at. Reads only return state for the current head sha, and every write first discards rows from older shas, so a push resets groups and progress and groups are rebuilt (manually or by LYT-63).
+- **Scoping**: every data-access call takes the PR (owner, repo, number) and head sha; a group id from another PR or an older sha is "not found". Endpoints must still check the caller can read the PR on GitHub before touching its state.
+- **No database required**: the API starts and serves the GitHub-backed routes without `DATABASE_URL`. The connection opens on first use (`getReviewDb`); guided-review routes use the `requireReviewDb` middleware, which answers 503 when it isn't set.
+
+Migrations: `pnpm --filter @lythium/db generate` after a schema change, `DB_URL=… pnpm --filter @lythium/db migrate` to apply.
+
 # Types contract
 
 `types.ts` (`GitHubRef`, `DiffFile`, `StackPR`, `StackDiff`, `StackItem`, `StackDiffResponse`) is imported by the web app as `@lythium/api/types` (see `package.json` `exports`). Any change to these shapes is a breaking change for `apps/web` — update both sides together.
