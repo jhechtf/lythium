@@ -29,7 +29,9 @@ Also run `pnpm biome ci` from the repo root. `apps/web` has its own `biome.json`
 GitHub OAuth via `octokit`'s `OAuthApp` (`src/lib/server/octokit.ts`), configured from `$app/env/private` (variables are declared in `src/env.ts`):
 `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`. The API base URL is `API_URL` (also private static).
 
-The user's access token lives in a `token` cookie. `src/hooks.server.ts` reads it on **every** request and constructs a per-request `Octokit` on `event.locals.octokit` (typed in `src/app.d.ts`). Server load functions use either `locals.octokit` (for GitHub calls) or read the `token` cookie directly to call the Lythium API with a `Bearer` header.
+Login is `GET /auth/github/login?redirectTo=/path` (sets single-use `oauth_state` + `oauth_return` cookies, redirects to GitHub) then `GET /auth/github/callback` (verifies state, exchanges the code, checks `GET /user`, sets the `token` cookie, redirects to the relative return path; failures use SvelteKit `error()`). All logic lives in `src/lib/server/oauth.ts` and is unit-tested in `oauth.spec.ts`.
+
+The user's access token lives in a `token` cookie (`HttpOnly`, `SameSite=Lax`, `Secure` outside dev). `src/hooks.server.ts` reads it on **every** request and constructs a per-request `Octokit` on `event.locals.octokit` (typed in `src/app.d.ts`). Server load functions use either `locals.octokit` (for GitHub calls) or read the `token` cookie directly to call the Lythium API with a `Bearer` header.
 
 # Routes
 
