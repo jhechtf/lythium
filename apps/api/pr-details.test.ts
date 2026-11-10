@@ -291,6 +291,39 @@ describe('GET /repos/:source/:owner/:repo/pr/:pr_number', () => {
     expect(body.reviewers[100]?.login).toBe('last');
   });
 
+  it.each([
+    '/pulls/7',
+    '/reviews',
+    '/commits',
+  ])('502s when the required %s lookup throws a network error', async (failing) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const path = new URL(url).pathname;
+        if (path.endsWith(failing)) throw new TypeError('fetch failed');
+        if (path.endsWith('/pulls/7')) return json(basePR());
+        if (path.endsWith('/reviews')) return json([]);
+        if (path.endsWith('/commits')) return json([commit]);
+        if (path.endsWith('/check-runs')) return json({ check_runs: [] });
+        return json([]);
+      }),
+    );
+    expect((await get()).status).toBe(502);
+  });
+
+  it("502s when the diff route's PR lookup throws a network error", async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed');
+      }),
+    );
+    const res = await app.request('/repos/github/o/r/pr/7/diff', {
+      headers: { Authorization: 'Bearer t' },
+    });
+    expect(res.status).toBe(502);
+  });
+
   it('forwards Retry-After on rate limiting', async () => {
     vi.stubGlobal(
       'fetch',

@@ -55,12 +55,21 @@ const githubHeaders = (token: string) => ({
   'User-Agent': 'lythium-api',
 });
 
+/**
+ * GET from the GitHub API. Never throws: a network error or an unreadable
+ * body comes back as a 502 result, so every caller's `upstreamError` mapping
+ * applies instead of Hono's generic 500.
+ */
 async function githubFetch(path: string, token: string) {
-  const res = await fetch(`https://api.github.com${path}`, {
-    headers: githubHeaders(token),
-  });
-  const data = res.ok ? await res.json() : await res.text();
-  return { ok: res.ok, status: res.status, data, headers: res.headers };
+  try {
+    const res = await fetch(`https://api.github.com${path}`, {
+      headers: githubHeaders(token),
+    });
+    const data: unknown = res.ok ? await res.json() : await res.text();
+    return { ok: res.ok, status: res.status, data, headers: res.headers };
+  } catch {
+    return { ok: false, status: 502, data: null, headers: new Headers() };
+  }
 }
 
 function shapePR(pr: GithubPR): StackPR {
