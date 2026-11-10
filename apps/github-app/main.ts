@@ -1,10 +1,9 @@
 import 'dotenv/config';
 import { readFile } from 'node:fs/promises';
 import { serve } from '@hono/node-server';
-import { createDb, pullRequests, stackMembers } from '@lythium/db';
+import { and, createDb, eq, pullRequests, stackMembers } from '@lythium/db';
 import { App } from '@octokit/app';
 import type { EmitterWebhookEventName } from '@octokit/webhooks';
-import { and, eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import SmeeClient from 'smee-client';
 import { parseStackSection } from './lib/parser.ts';
