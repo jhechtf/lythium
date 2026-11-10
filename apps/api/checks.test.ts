@@ -31,7 +31,7 @@ const status = (
   ...over,
 });
 
-const SHA = 'abcdef1234567';
+const SHA = 'abcdef1234567890abcdef1234567890abcdef12';
 
 describe('mapCheckRunState', () => {
   it.each([
@@ -322,6 +322,56 @@ describe('GET /repos/:source/:owner/:repo/pr/:pr_number/checks', () => {
     };
     expect(body.total).toBe(101);
     expect(body.state).toBe('failed');
+  });
+
+  it('fetches the remaining check-run pages in parallel using total_count', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const pagesRequested: string[] = [];
+    stubGithub({
+      '/pulls/7': () => json(pr),
+      '/check-runs': async (u) => {
+        const page = u.searchParams.get('page') ?? '';
+        pagesRequested.push(page);
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight--;
+        const size = page === '3' ? 50 : 100;
+        return json({
+          total_count: 250,
+          check_runs: Array.from({ length: size }, (_, i) =>
+            run({ id: Number(page) * 1000 + i, name: `p${page}-${i}` }),
+          ),
+        });
+      },
+      '/status': () => json({ total_count: 0, statuses: [] }),
+    });
+    const body = (await (await get()).json()) as { total: number };
+    expect(body.total).toBe(250);
+    expect(pagesRequested.sort()).toEqual(['1', '2', '3']);
+    expect(maxInFlight).toBe(2); // pages 2 and 3 together
+  });
+
+  it.each([
+    ['/repos/github/o/r/pr/..%2F..%2F..%2F..%2Fuser/checks', 400],
+    ['/repos/github/o/r/pr/abc/checks', 400],
+    ['/repos/github/o/r/pr/0/checks', 400],
+    ['/repos/github/o%2F..%2F..%2Fuser/r/pr/7/checks', 400],
+    ['/repos/github/o/r%3Fx%3D1/pr/7/checks', 400],
+    // The URL parser resolves `..` (also `%2E%2E`) before routing, so these
+    // never match the route; the handler's name check is a second layer.
+    ['/repos/github/%2E%2E/r/pr/7/checks', 404],
+  ] as const)('rejects %s with %i and never calls GitHub', async (path, status) => {
+    const calls = stubGithub({});
+    const res = await get(undefined, path);
+    expect(res.status).toBe(status);
+    expect(calls).toEqual([]);
+  });
+
+  it('502s instead of crashing when the PR response has no head sha', async () => {
+    stubGithub({ '/pulls/7': () => json({ message: 'not a PR' }) });
+    expect((await get()).status).toBe(502);
   });
 
   it('still returns check runs when statuses are inaccessible', async () => {
