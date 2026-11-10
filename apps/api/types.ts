@@ -86,6 +86,47 @@ export interface PRLatestCommit {
   message: string;
 }
 
+/** Normalized state of one check. */
+export type CheckState = 'passed' | 'running' | 'failed' | 'skipped';
+
+/**
+ * Overall CI state: `failed` if any check failed, else `running` if any is
+ * still going, else `passed`. `none` means the head sha has no checks.
+ */
+export type OverallCheckState = 'passed' | 'running' | 'failed' | 'none';
+
+export interface PRCheck {
+  name: string;
+  /** `check_run` (Checks API) or `status` (legacy commit status). */
+  source: 'check_run' | 'status';
+  /** GitHub's raw status, e.g. `queued`, `in_progress`, `completed`. */
+  status: string;
+  /** GitHub's raw conclusion; null until the check completes. */
+  conclusion: string | null;
+  state: CheckState;
+  started_at: string | null;
+  completed_at: string | null;
+  /** Null while running, and always null for commit statuses. */
+  duration_seconds: number | null;
+  url: string | null;
+}
+
+export interface PRChecksResponse {
+  state: OverallCheckState;
+  counts: Record<CheckState, number>;
+  total: number;
+  /** The build is the set of checks on the PR's head sha. */
+  build: {
+    sha: string;
+    short_sha: string;
+    /** Earliest check start. */
+    started_at: string | null;
+    /** Latest check finish; null while any check is running. */
+    completed_at: string | null;
+  };
+  checks: PRCheck[];
+}
+
 export interface PRDetailsResponse {
   number: number;
   title: string;
