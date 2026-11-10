@@ -25,6 +25,9 @@ importers:
       '@hono/node-server':
         specifier: ^1.13.7
         version: 1.19.17(hono@4.11.10)
+      '@lythium/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       hono:
         specifier: ^4.11.10
         version: 4.11.10
@@ -59,9 +62,6 @@ importers:
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
-      drizzle-orm:
-        specifier: ^0.41.0
-        version: 0.41.0(postgres@3.4.9)
       hono:
         specifier: ^4.11.10
         version: 4.11.10
@@ -229,11 +229,14 @@ importers:
     dependencies:
       drizzle-orm:
         specifier: ^0.41.0
-        version: 0.41.0(postgres@3.4.9)
+        version: 0.41.0(@electric-sql/pglite@0.5.15)(postgres@3.4.9)
       postgres:
         specifier: ^3.4.5
         version: 3.4.9
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.5.15
+        version: 0.5.15
       '@types/node':
         specifier: ^24.0.0
         version: 24.12.2
@@ -243,6 +246,9 @@ importers:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@24.12.2)(@vitest/browser@3.2.4)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
 
 packages:
 
@@ -429,6 +435,9 @@ packages:
 
   '@drizzle-team/brocli@0.10.2':
     resolution: {integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==}
+
+  '@electric-sql/pglite@0.5.15':
+    resolution: {integrity: sha512-ERZWgaRTxueGV4cvL1tfpAOzFCWTXoUtbCBqnf2FhHDVs/so9eAKaanvrwWF9Dntx7BYsmFQujVQ0/B4S8Mmiw==}
 
   '@emnapi/core@1.8.1':
     resolution: {integrity: sha512-AvT9QFpxK0Zd8J0jopedNm+w/2fIzvtPKPjqyw9jwvBaReTTqPBk9Hixaz7KbjimP+QNz605/XnjFcDAL2pqBg==}
@@ -3471,6 +3480,8 @@ snapshots:
 
   '@drizzle-team/brocli@0.10.2': {}
 
+  '@electric-sql/pglite@0.5.15': {}
+
   '@emnapi/core@1.8.1':
     dependencies:
       '@emnapi/wasi-threads': 1.1.0
@@ -4897,8 +4908,9 @@ snapshots:
       esbuild: 0.25.11
       tsx: 4.21.0
 
-  drizzle-orm@0.41.0(postgres@3.4.9):
+  drizzle-orm@0.41.0(@electric-sql/pglite@0.5.15)(postgres@3.4.9):
     optionalDependencies:
+      '@electric-sql/pglite': 0.5.15
       postgres: 3.4.9
 
   dts-resolver@2.1.3: {}
