@@ -51,7 +51,8 @@ export interface GithubCheckRun {
   conclusion: string | null;
 }
 
-const FAILING_CONCLUSIONS = new Set([
+/** Check-run conclusions that count as failing. Shared with `checks.ts`. */
+export const FAILING_CONCLUSIONS: ReadonlySet<string> = new Set([
   'failure',
   'timed_out',
   'cancelled',
