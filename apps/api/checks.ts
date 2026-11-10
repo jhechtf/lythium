@@ -1,3 +1,4 @@
+import { FAILING_CONCLUSIONS } from './pr-details.ts';
 import type {
   CheckState,
   OverallCheckState,
@@ -27,13 +28,6 @@ export interface GithubCommitStatus {
   updated_at: string;
 }
 
-const FAILED_CONCLUSIONS = new Set([
-  'failure',
-  'timed_out',
-  'cancelled',
-  'action_required',
-  'startup_failure',
-]);
 const SKIPPED_CONCLUSIONS = new Set(['skipped', 'stale']);
 
 export function mapCheckRunState(
@@ -41,7 +35,7 @@ export function mapCheckRunState(
   conclusion: string | null,
 ): CheckState {
   if (status !== 'completed' || conclusion === null) return 'running';
-  if (FAILED_CONCLUSIONS.has(conclusion)) return 'failed';
+  if (FAILING_CONCLUSIONS.has(conclusion)) return 'failed';
   if (SKIPPED_CONCLUSIONS.has(conclusion)) return 'skipped';
   // success and neutral both count as passing, as GitHub does for merging.
   return 'passed';
