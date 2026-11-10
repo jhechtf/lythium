@@ -24,7 +24,10 @@ Endpoints:
 ```
 GET /repos/:source/:owner/:repo/pr/:pr_number/diff
 GET /repos/:source/:owner/:repo/pr/:pr_number        # PR details + merge status (pr-details.ts)
+GET /repos/:source/:owner/:repo/pr/:pr_number/checks # CI state, counts and per-check detail (checks.ts)
 ```
+
+- **Checks**: check runs plus legacy commit statuses for the PR's head sha. Each check is normalized to `passed` (success, neutral), `failed`, `running` (anything not completed, or a pending status) or `skipped` (skipped, stale). Overall state is `failed` > `running` > `passed`, or `none` with no checks. Durations come from check-run start/finish and are null while running; commit statuses have no start time, so their duration is always null. The commit-status lookup is best-effort (tokens often lack the permission); a failing check-runs call fails the request.
 
 - **`:source`** is the hosting platform. Only `github` is implemented; any other value → 400 `{ error, supported }`. GitLab (and maybe Forgejo) are planned, so keep platform-specific calls behind the `githubFetch` boundary.
 

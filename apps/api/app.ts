@@ -1,6 +1,11 @@
 import { type Context, Hono } from 'hono';
 import { cors } from 'hono/cors';
 import {
+  buildPRChecks,
+  type GithubCheckRunFull,
+  type GithubCommitStatus,
+} from './checks.ts';
+import {
   buildPRDetails,
   type GithubCheckRun,
   type GithubCommit,
@@ -9,6 +14,7 @@ import {
 } from './pr-details.ts';
 import type {
   DiffFile,
+  PRChecksResponse,
   PRDetailsResponse,
   StackDiffResponse,
   StackItem,
@@ -273,6 +279,46 @@ export const app = new Hono()
         latestCommit: (commitResult.data as GithubCommit[])[0],
         checks,
         parentPr,
+      }),
+    );
+  })
+  .get('/repos/:source/:owner/:repo/pr/:pr_number/checks', async (c) => {
+    const badSource = unsupportedSource(c, c.req.param('source'));
+    if (badSource) return badSource;
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return c.json({ error: 'Missing or invalid Authorization header' }, 401);
+    }
+    const token = authHeader.slice(7);
+    const { owner, repo, pr_number } = c.req.param();
+    const base = `/repos/${owner}/${repo}`;
+
+    const prResult = await githubFetch(`${base}/pulls/${pr_number}`, token);
+    if (!prResult.ok) return upstreamError(c, prResult, pr_number);
+    const headSha = (prResult.data as { head: { sha: string } }).head.sha;
+
+    const [runsResult, statusesResult] = await Promise.all([
+      githubFetchAll<GithubCheckRunFull>(
+        `${base}/commits/${headSha}/check-runs`,
+        token,
+        (d) => (d as { check_runs?: GithubCheckRunFull[] }).check_runs ?? [],
+      ),
+      // Legacy commit statuses are a supplement: tokens often lack the
+      // permission, so a failure here must not fail the request.
+      githubFetchAll<GithubCommitStatus>(
+        `${base}/commits/${headSha}/status`,
+        token,
+        (d) => (d as { statuses?: GithubCommitStatus[] }).statuses ?? [],
+      ).catch(() => null),
+    ]);
+
+    if (!runsResult.ok) return upstreamError(c, runsResult.result, pr_number);
+
+    return c.json<PRChecksResponse>(
+      buildPRChecks({
+        headSha,
+        checkRuns: runsResult.items,
+        statuses: statusesResult?.ok ? statusesResult.items : [],
       }),
     );
   });
