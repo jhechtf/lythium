@@ -36,7 +36,7 @@ GET /repos/:source/:owner/:repo/pr/:pr_number/checks # CI state, counts and per-
 - **Stack reconstruction**: starting from the requested PR, walk *up* the stack by treating each PR's `base.ref` as the head of its parent PR and searching open PRs for it. Stops when no parent PR is found or at `MAX_STACK_DEPTH` (20). The `prs` array is kept bottom-to-top (`unshift` parents).
 - **Per-PR diff**: for each PR, `GET /repos/{owner}/{repo}/compare/{base.sha}...{head.sha}`; a failed compare yields an empty diff entry rather than failing the whole response.
 - **Response**: `StackDiffResponse` (`{ stack: StackItem[] }`), bottom-to-top.
-- GitHub error mapping: upstream 401 → 401, 404 → 404, 403/429 → 429 (with `Retry-After`), anything else → 502.
+- GitHub error mapping: upstream 401 → 401, 404 → 404, 403/429 → 429 (with `Retry-After`), anything else → 502. `githubFetch` never throws: a network error or unreadable body is a 502 result, so it goes through the same mapping.
 - CORS is wide open (`hono/cors` on `*`).
 
 `export type AppType = typeof app` is exported for a potential Hono RPC client.

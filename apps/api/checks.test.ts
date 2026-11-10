@@ -369,6 +369,33 @@ describe('GET /repos/:source/:owner/:repo/pr/:pr_number/checks', () => {
     expect(calls).toEqual([]);
   });
 
+  it.each([
+    ['the PR lookup', '/pulls/7'],
+    ['the check-runs fetch', '/check-runs'],
+  ])('502s when %s throws a network error', async (_, failing) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const path = new URL(url).pathname;
+        if (path.endsWith(failing)) throw new TypeError('fetch failed');
+        if (path.endsWith('/pulls/7')) return json(pr);
+        if (path.endsWith('/check-runs')) return json({ check_runs: [] });
+        return json({ statuses: [] });
+      }),
+    );
+    const res = await get();
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: 'GitHub API error' });
+  });
+
+  it('502s when GitHub returns an unreadable body', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('not json{', { status: 200 })),
+    );
+    expect((await get()).status).toBe(502);
+  });
+
   it('502s instead of crashing when the PR response has no head sha', async () => {
     stubGithub({ '/pulls/7': () => json({ message: 'not a PR' }) });
     expect((await get()).status).toBe(502);
