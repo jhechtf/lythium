@@ -25,7 +25,7 @@ env:
 jobs:
   ci:
     name: Affected lint / typecheck / test / build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # Playwright 1.56 does not support ubuntu-26.04 (now ubuntu-latest)
     steps:
       - uses: actions/checkout@v6
         with:
