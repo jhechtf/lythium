@@ -7,6 +7,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   createGroup,
   deleteGroup,
+  editablePR,
   getGroup,
   getProgress,
   listGroups,
@@ -32,10 +33,15 @@ async function migratedDb() {
 
 const SHA = 'sha-1';
 const NEW_SHA = 'sha-2';
-const PR = verifiedPR({ owner: 'o', repo: 'r', prNumber: 7, headSha: SHA });
-const OTHER_PR = verifiedPR({ ...PR, prNumber: 8 });
+// Editable, so the fixtures work for group writes and reads alike.
+const PR = editablePR(
+  verifiedPR({ owner: 'o', repo: 'r', prNumber: 7, headSha: SHA }),
+);
+const OTHER_PR = editablePR(verifiedPR({ ...PR, prNumber: 8 }));
 /** The same PR after a push. */
-const PR_PUSHED = verifiedPR({ ...PR, headSha: NEW_SHA });
+const PR_PUSHED = editablePR(verifiedPR({ ...PR, headSha: NEW_SHA }));
+/** Readable but not editable: someone without push access who didn't write it. */
+const READ_ONLY_PR = verifiedPR({ ...PR });
 const ALICE = 101;
 const BOB = 202;
 
@@ -400,5 +406,47 @@ describe('review state', () => {
         ).rejects.toBeInstanceOf(ReviewStateError);
       });
     });
+  });
+
+  describe('access', () => {
+    it('only lets an EditablePR change shared groups', async () => {
+      const g = await createGroup(db, PR, { name: 'A', files: [] }, ALICE);
+      // Compile-time checks: a read-only PR can't reach group mutations.
+      const blocked = () => [
+        // @ts-expect-error VerifiedPR is not an EditablePR
+        createGroup(db, READ_ONLY_PR, { name: 'B', files: [] }, BOB),
+        // @ts-expect-error VerifiedPR is not an EditablePR
+        replaceGroups(db, READ_ONLY_PR, [], 'manual', BOB),
+        // @ts-expect-error VerifiedPR is not an EditablePR
+        updateGroup(db, READ_ONLY_PR, g.id, { name: 'x' }),
+        // @ts-expect-error VerifiedPR is not an EditablePR
+        reorderGroups(db, READ_ONLY_PR, [g.id]),
+        // @ts-expect-error VerifiedPR is not an EditablePR
+        deleteGroup(db, READ_ONLY_PR, g.id),
+      ];
+      expect(typeof blocked).toBe('function');
+
+      // Reads and the caller's own marks only need a VerifiedPR.
+      expect(await listGroups(db, READ_ONLY_PR)).toHaveLength(1);
+      expect(await setGroupReviewed(db, READ_ONLY_PR, g.id, BOB, true)).toBe(
+        true,
+      );
+      await setFileViewed(db, READ_ONLY_PR, BOB, 'a.ts', true);
+      expect(await getProgress(db, READ_ONLY_PR, BOB)).toMatchObject({
+        reviewedGroupIds: [g.id],
+        viewedFiles: ['a.ts'],
+      });
+    });
+  });
+
+  // PGlite is one connection, so this can't reproduce the race; it checks the
+  // advisory lock runs inside overlapping write transactions without error.
+  it('gives overlapping creates unique positions', async () => {
+    const made = await Promise.all(
+      Array.from({ length: 5 }, (_, i) =>
+        createGroup(db, PR, { name: `G${i}`, files: [] }, ALICE),
+      ),
+    );
+    expect(new Set(made.map((g) => g.position)).size).toBe(5);
   });
 });

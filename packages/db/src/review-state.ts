@@ -25,7 +25,15 @@ import {
  * a stale tab would keep deleting newer state. Build one with `verifiedPR()`
  * only from `GET /repos/{owner}/{repo}/pulls/{n}` called with the caller's
  * token (the API's `resolvePR` does this). That same call proves the caller
- * can read the repo, which is the access check for both reads and writes.
+ * can read the repo, which is the access check for reads and for the
+ * caller's own reviewed/viewed marks.
+ *
+ * Groups are shared, and on a public repo anyone can read a PR, so changing
+ * groups needs more: an `EditablePR`, which the API only grants to the PR's
+ * author or a caller with push access (see `editablePR`).
+ *
+ * Writes take a per-PR advisory lock, so concurrent writes can't race past
+ * the group cap or interleave a create with a reorder.
  */
 
 /** Any Drizzle Postgres database built on this schema (postgres-js, PGlite). */
@@ -52,6 +60,20 @@ export function verifiedPR(pr: {
   headSha: string;
 }): VerifiedPR {
   return { ...pr } as VerifiedPR;
+}
+
+declare const editable: unique symbol;
+
+/** A `VerifiedPR` whose caller may change its shared groups. */
+export type EditablePR = VerifiedPR & { readonly [editable]: true };
+
+/**
+ * Mark a verified PR as editable by the caller. Only call this once GitHub
+ * (with the caller's token) shows the caller is the PR's author or has push
+ * access to the repo, or for trusted server-side jobs (AI clustering).
+ */
+export function editablePR(pr: VerifiedPR): EditablePR {
+  return pr as EditablePR;
 }
 
 export type GroupSource = 'manual' | 'ai';
@@ -214,6 +236,24 @@ function shapeGroups(groups: GroupRow[], files: FileRow[]): ReviewGroup[] {
 }
 
 /**
+ * Serialize writes to one PR until the transaction ends. Call first in every
+ * write transaction: the group cap, positions and reorder all read, then
+ * write. A hash collision between PRs only makes them wait for each other.
+ */
+async function lockPR(tx: ReviewDb, pr: VerifiedPR) {
+  const key = `${pr.owner}/${pr.repo}#${pr.prNumber}`;
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`,
+  );
+}
+
+/** Start a write transaction: lock the PR, then drop state from older shas. */
+async function beginWrite(tx: ReviewDb, pr: VerifiedPR) {
+  await lockPR(tx, pr);
+  await discardStaleState(tx, pr);
+}
+
+/**
  * Delete groups (with their files and reviewed marks) and viewed marks for
  * this PR that were made at any sha other than its current head.
  */
@@ -282,13 +322,13 @@ export async function getGroup(
 /** Append a manually created group at the end of the list. */
 export async function createGroup(
   db: ReviewDb,
-  pr: VerifiedPR,
+  pr: EditablePR,
   group: NewGroup,
   createdBy: number,
 ): Promise<ReviewGroup> {
   const g = normalizeGroup(group);
   const id = await db.transaction(async (tx) => {
-    await discardStaleState(tx, pr);
+    await beginWrite(tx, pr);
     const [{ last, count }] = await tx
       .select({
         last: max(reviewGroups.position),
@@ -333,7 +373,7 @@ export async function createGroup(
  */
 export async function replaceGroups(
   db: ReviewDb,
-  pr: VerifiedPR,
+  pr: EditablePR,
   groups: NewGroup[],
   source: GroupSource,
   createdBy: number | null,
@@ -352,7 +392,7 @@ export async function replaceGroups(
   }
 
   await db.transaction(async (tx) => {
-    await discardStaleState(tx, pr);
+    await beginWrite(tx, pr);
     await tx.delete(reviewGroups).where(prWhere(pr));
     if (normalized.length === 0) return;
     const inserted = await tx
@@ -387,7 +427,7 @@ export async function replaceGroups(
 /** Update a group's name, description and/or files. Null if not found. */
 export async function updateGroup(
   db: ReviewDb,
-  pr: VerifiedPR,
+  pr: EditablePR,
   groupId: number,
   patch: Partial<NewGroup>,
 ): Promise<ReviewGroup | null> {
@@ -396,7 +436,7 @@ export async function updateGroup(
   const files = patch.files ? normalizeFiles(patch.files) : undefined;
 
   const found = await db.transaction(async (tx) => {
-    await discardStaleState(tx, pr);
+    await beginWrite(tx, pr);
     const updated = await tx
       .update(reviewGroups)
       .set({
@@ -427,11 +467,11 @@ export async function updateGroup(
 /** Set display order. `groupIds` must list exactly the PR's current groups. */
 export async function reorderGroups(
   db: ReviewDb,
-  pr: VerifiedPR,
+  pr: EditablePR,
   groupIds: number[],
 ): Promise<ReviewGroup[]> {
   await db.transaction(async (tx) => {
-    await discardStaleState(tx, pr);
+    await beginWrite(tx, pr);
     const current = await tx
       .select({ id: reviewGroups.id })
       .from(reviewGroups)
@@ -464,7 +504,7 @@ export async function reorderGroups(
 /** Delete one group. False if it isn't on this PR at its head sha. */
 export async function deleteGroup(
   db: ReviewDb,
-  pr: VerifiedPR,
+  pr: EditablePR,
   groupId: number,
 ): Promise<boolean> {
   const deleted = await db
@@ -483,7 +523,7 @@ export async function setGroupReviewed(
   reviewed: boolean,
 ): Promise<boolean> {
   return db.transaction(async (tx) => {
-    await discardStaleState(tx, pr);
+    await beginWrite(tx, pr);
     const [group] = await tx
       .select({ id: reviewGroups.id })
       .from(reviewGroups)
@@ -518,7 +558,7 @@ export async function setFileViewed(
 ): Promise<void> {
   checkPath(path);
   await db.transaction(async (tx) => {
-    await discardStaleState(tx, pr);
+    await beginWrite(tx, pr);
     const key = {
       owner: pr.owner,
       repo: pr.repo,

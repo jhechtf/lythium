@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
 import {
   createDb,
+  type EditablePR,
+  editablePR,
   type ReviewDb,
   type VerifiedPR,
   verifiedPR,
 } from '@lythium/db';
 import { createMiddleware } from 'hono/factory';
+import { type FetchResult, githubFetch, localFailure } from './github.ts';
 
 /**
  * Wiring for guided-review state (LYT-60). The API runs without a database:
@@ -18,6 +21,10 @@ import { createMiddleware } from 'hono/factory';
  *   token. It is the access check, and the only way to get the `VerifiedPR`
  *   the data layer requires. Never take the head sha from the request.
  * - `fetchViewer`: who the caller is (cached briefly).
+ *
+ * Reading a PR is enough to read its groups and set your own reviewed/viewed
+ * marks. Changing the shared groups also needs `editableBy(resolved, viewer)`:
+ * on a public repo anyone can read the PR.
  */
 
 let cached: ReviewDb | null | undefined;
@@ -49,38 +56,16 @@ export const requireReviewDb = createMiddleware<{
   await next();
 });
 
-/** GitHub lookups give up after this long, so a slow GitHub can't hang a request. */
-export const GITHUB_TIMEOUT_MS = 5000;
+/**
+ * Guided-review lookups give up sooner than `githubFetch`'s default: they
+ * run before every guided-review request, and are small.
+ */
+export const REVIEW_LOOKUP_TIMEOUT_MS = 5000;
 
-type GithubResult =
-  | { ok: true; data: unknown }
-  | {
-      ok: false;
-      /** Upstream status, 504 on timeout, 502 on a network error. */
-      status: number;
-    };
+/** A failed lookup; pass it to `upstreamError` for the response. */
+export type LookupFailure = FetchResult & { ok: false };
 
-async function githubGet(path: string, token: string): Promise<GithubResult> {
-  try {
-    const res = await fetch(`https://api.github.com${path}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': 'lythium-api',
-      },
-      signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
-    });
-    if (!res.ok) return { ok: false, status: res.status };
-    return { ok: true, data: await res.json() };
-  } catch (err) {
-    const name = (err as { name?: string } | null)?.name;
-    return {
-      ok: false,
-      status: name === 'TimeoutError' || name === 'AbortError' ? 504 : 502,
-    };
-  }
-}
+const fail = (status: number) => localFailure(status) as LookupFailure;
 
 export interface Viewer {
   id: number;
@@ -108,17 +93,17 @@ export function clearViewerCache() {
  */
 export async function fetchViewer(
   token: string,
-): Promise<{ ok: true; viewer: Viewer } | { ok: false; status: number }> {
+): Promise<{ ok: true; viewer: Viewer } | LookupFailure> {
   const key = createHash('sha256').update(token).digest('hex');
   const hit = viewerCache.get(key);
   if (hit && hit.expires > Date.now()) return { ok: true, viewer: hit.viewer };
   if (hit) viewerCache.delete(key);
 
-  const result = await githubGet('/user', token);
-  if (!result.ok) return result;
+  const result = await githubFetch('/user', token, REVIEW_LOOKUP_TIMEOUT_MS);
+  if (!result.ok) return result as LookupFailure;
   const data = result.data as { id?: unknown; login?: unknown } | null;
   if (typeof data?.id !== 'number' || typeof data.login !== 'string') {
-    return { ok: false, status: 502 };
+    return fail(502);
   }
   const viewer = { id: data.id, login: data.login };
 
@@ -134,31 +119,71 @@ export async function fetchViewer(
 const NAME_RE = /^[A-Za-z0-9._-]{1,100}$/;
 const isName = (s: string) => NAME_RE.test(s) && s !== '.' && s !== '..';
 
+/** A PR read from GitHub, with what it says about the caller's access. */
+export interface ResolvedPR {
+  pr: VerifiedPR;
+  /** GitHub user id of the PR's author. */
+  authorId: number | null;
+  /** The caller has push (or maintain/admin) access to the base repo. */
+  canPush: boolean;
+}
+
+interface GithubPRAccess {
+  head?: { sha?: unknown };
+  user?: { id?: unknown } | null;
+  base?: {
+    repo?: {
+      permissions?: { push?: unknown; maintain?: unknown; admin?: unknown };
+    };
+  };
+}
+
 /**
  * Read the PR from GitHub with the caller's token and return it as the
- * `VerifiedPR` the data layer requires. A non-ok result means the caller
- * can't read it (401/403/404 from GitHub), the input was invalid (400), or
- * GitHub failed (429/5xx, 504 on timeout).
+ * `VerifiedPR` the data layer requires. A failure means the caller can't
+ * read it (401/403/404 from GitHub), the input was invalid (400), or GitHub
+ * failed (429/5xx, 504 on timeout).
  */
 export async function resolvePR(
   token: string,
   owner: string,
   repo: string,
   prNumber: number,
-): Promise<{ ok: true; pr: VerifiedPR } | { ok: false; status: number }> {
-  if (!isName(owner) || !isName(repo)) return { ok: false, status: 400 };
-  if (!Number.isInteger(prNumber) || prNumber < 1) {
-    return { ok: false, status: 400 };
-  }
-  const result = await githubGet(
+): Promise<({ ok: true } & ResolvedPR) | LookupFailure> {
+  if (!isName(owner) || !isName(repo)) return fail(400);
+  if (!Number.isInteger(prNumber) || prNumber < 1) return fail(400);
+  const result = await githubFetch(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}`,
     token,
+    REVIEW_LOOKUP_TIMEOUT_MS,
   );
-  if (!result.ok) return result;
-  const headSha = (result.data as { head?: { sha?: unknown } } | null)?.head
-    ?.sha;
+  if (!result.ok) return result as LookupFailure;
+  const data = result.data as GithubPRAccess | null;
+  const headSha = data?.head?.sha;
   if (typeof headSha !== 'string' || !/^[0-9a-f]{40}$/i.test(headSha)) {
-    return { ok: false, status: 502 };
+    return fail(502);
   }
-  return { ok: true, pr: verifiedPR({ owner, repo, prNumber, headSha }) };
+  // `permissions` is only present for authenticated requests; absent → false.
+  const perms = data?.base?.repo?.permissions;
+  const authorId = data?.user?.id;
+  return {
+    ok: true,
+    pr: verifiedPR({ owner, repo, prNumber, headSha }),
+    authorId: typeof authorId === 'number' ? authorId : null,
+    canPush:
+      perms?.push === true || perms?.maintain === true || perms?.admin === true,
+  };
+}
+
+/**
+ * The PR as an `EditablePR` if this viewer may change its shared groups:
+ * they wrote the PR or can push to the repo. Null otherwise (answer 403).
+ */
+export function editableBy(
+  resolved: ResolvedPR,
+  viewer: Viewer,
+): EditablePR | null {
+  const isAuthor =
+    resolved.authorId !== null && resolved.authorId === viewer.id;
+  return isAuthor || resolved.canPush ? editablePR(resolved.pr) : null;
 }

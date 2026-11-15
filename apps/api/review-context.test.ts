@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { app } from './app.ts';
 import {
   clearViewerCache,
+  editableBy,
   fetchViewer,
   getReviewDb,
   requireReviewDb,
@@ -79,7 +80,7 @@ describe('fetchViewer', () => {
       'fetch',
       vi.fn(async () => new Response('{}', { status: 401 })),
     );
-    expect(await fetchViewer('bad')).toEqual({ ok: false, status: 401 });
+    expect(await fetchViewer('bad')).toMatchObject({ ok: false, status: 401 });
   });
 });
 
@@ -114,8 +115,8 @@ describe('fetchViewer caching and timeouts', () => {
     vi.stubGlobal('fetch', fetchMock);
     expect(await fetchViewer('a')).toMatchObject({ viewer: { id: 1 } });
     expect(await fetchViewer('b')).toMatchObject({ viewer: { id: 2 } });
-    expect(await fetchViewer('bad')).toEqual({ ok: false, status: 401 });
-    expect(await fetchViewer('bad')).toEqual({ ok: false, status: 401 });
+    expect(await fetchViewer('bad')).toMatchObject({ ok: false, status: 401 });
+    expect(await fetchViewer('bad')).toMatchObject({ ok: false, status: 401 });
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
@@ -128,7 +129,7 @@ describe('fetchViewer caching and timeouts', () => {
         throw new DOMException('timed out', 'TimeoutError');
       }),
     );
-    expect(await fetchViewer('t')).toEqual({ ok: false, status: 504 });
+    expect(await fetchViewer('t')).toMatchObject({ ok: false, status: 504 });
     expect(signal).toBeInstanceOf(AbortSignal);
   });
 
@@ -139,7 +140,7 @@ describe('fetchViewer caching and timeouts', () => {
         throw new TypeError('fetch failed');
       }),
     );
-    expect(await fetchViewer('t')).toEqual({ ok: false, status: 502 });
+    expect(await fetchViewer('t')).toMatchObject({ ok: false, status: 502 });
   });
 });
 
@@ -155,6 +156,8 @@ describe('resolvePR', () => {
     expect(await resolvePR('t', 'o', 'r', 7)).toEqual({
       ok: true,
       pr: { owner: 'o', repo: 'r', prNumber: 7, headSha: SHA },
+      authorId: null,
+      canPush: false,
     });
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       'https://api.github.com/repos/o/r/pulls/7',
@@ -169,7 +172,7 @@ describe('resolvePR', () => {
   ])('rejects %s/%s#%s without calling GitHub', async (owner, repo, n) => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    expect(await resolvePR('t', owner, repo, n)).toEqual({
+    expect(await resolvePR('t', owner, repo, n)).toMatchObject({
       ok: false,
       status: 400,
     });
@@ -181,7 +184,7 @@ describe('resolvePR', () => {
       'fetch',
       vi.fn(async () => new Response('{}', { status: 404 })),
     );
-    expect(await resolvePR('t', 'o', 'r', 7)).toEqual({
+    expect(await resolvePR('t', 'o', 'r', 7)).toMatchObject({
       ok: false,
       status: 404,
     });
@@ -192,9 +195,56 @@ describe('resolvePR', () => {
       'fetch',
       vi.fn(async () => new Response(JSON.stringify({ head: { sha: 'x' } }))),
     );
-    expect(await resolvePR('t', 'o', 'r', 7)).toEqual({
+    expect(await resolvePR('t', 'o', 'r', 7)).toMatchObject({
       ok: false,
       status: 502,
     });
+  });
+
+  it.each([
+    ['push', { push: true }, true],
+    ['maintain', { maintain: true }, true],
+    ['admin', { admin: true }, true],
+    ['read only', { pull: true, push: false }, false],
+    ['no permissions field', undefined, false],
+  ])('reads push access from the PR (%s)', async (_label, permissions, canPush) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              head: { sha: SHA },
+              user: { id: 9 },
+              base: { repo: { permissions } },
+            }),
+          ),
+      ),
+    );
+    expect(await resolvePR('t', 'o', 'r', 7)).toMatchObject({
+      ok: true,
+      authorId: 9,
+      canPush,
+    });
+  });
+});
+
+describe('editableBy', () => {
+  const pr = { owner: 'o', repo: 'r', prNumber: 7, headSha: 'a'.repeat(40) };
+  const resolved = (authorId: number | null, canPush: boolean) =>
+    ({ pr, authorId, canPush }) as Parameters<typeof editableBy>[0];
+  const viewer = { id: 42, login: 'alice' };
+
+  it('lets the PR author edit groups', () => {
+    expect(editableBy(resolved(42, false), viewer)).toEqual(pr);
+  });
+
+  it('lets a caller with push access edit groups', () => {
+    expect(editableBy(resolved(9, true), viewer)).toEqual(pr);
+  });
+
+  it('refuses a caller who can only read the PR', () => {
+    expect(editableBy(resolved(9, false), viewer)).toBeNull();
+    expect(editableBy(resolved(null, false), viewer)).toBeNull();
   });
 });
