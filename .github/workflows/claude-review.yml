@@ -36,7 +36,12 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Keyless auth via Workload Identity Federation (needs id-token: write).
+          # These are identifiers, not credentials.
+          anthropic_federation_rule_id: fdrl_018bhdaWxSSk7Xws5oG7aKEV
+          anthropic_organization_id: 4bd74bf9-263b-4ff9-9423-ae6d4c9f2e79
+          anthropic_service_account_id: svac_01HJwsBaSezkFyUZ5VZ6Q11Z
+          anthropic_workspace_id: wrkspc_01AKArW7XDKiWjqo71i6RJkJ
           track_progress: true
           prompt: |
             REPO: ${{ github.repository }}
