@@ -38,13 +38,11 @@ jobs:
         with:
           # Keyless auth via Workload Identity Federation (needs id-token: write).
           # These are identifiers, not credentials.
-          anthropic_federation_rule_id: fdrl_018bhdaWxSSk7Xws5oG7aKEV
+          anthropic_federation_rule_id: fdrl_015CQ2Wod6trh8ba1WbLL8oq
           anthropic_organization_id: 4bd74bf9-263b-4ff9-9423-ae6d4c9f2e79
           anthropic_service_account_id: svac_01HJwsBaSezkFyUZ5VZ6Q11Z
           anthropic_workspace_id: wrkspc_01AKArW7XDKiWjqo71i6RJkJ
           track_progress: true
-          # TEMP: debugging is_error:true with no usage. Remove once fixed.
-          show_full_output: true
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
@@ -110,3 +108,5 @@ jobs:
             --max-turns 25
             --allowedTools
             "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep"
+            --disallowedTools
+            "Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,Workflow,CronCreate,CronDelete,ScheduleWakeup,EnterWorktree,SendMessage"
