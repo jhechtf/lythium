@@ -1,0 +1,90 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+    # Only review changes to application / package code.
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+
+# Cancel superseded reviews on the same PR.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Claude review (consistency / performance / security)
+    # Skip drafts. Fork PRs don't receive secrets, so they can't be reviewed.
+    if: >
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          track_progress: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Review this pull request. Read the root CLAUDE.md and the CLAUDE.md
+            of each package the PR touches (apps/api, apps/web, packages/cli)
+            before judging the code.
+
+            Scope: ONLY files under `apps/` and `packages/`. Ignore everything
+            else (docs, workflows, lockfiles, config, generated files) even if
+            it appears in the diff.
+
+            Focus on exactly three areas:
+
+            1. Code consistency
+               - Follows the conventions and architecture in the CLAUDE.md files
+                 and the surrounding code (naming, error handling, module
+                 layout, shared data model between CLI/API/web).
+               - Biome style (2-space, single quotes) and conventional patterns
+                 already used in the package; no reinvented helpers when one exists.
+               - Tests added or updated for changed behaviour.
+
+            2. Performance
+               - Unnecessary work in hot paths, N+1 GitHub/API/DB calls,
+                 missing pagination or batching, redundant git subprocesses,
+                 unbounded memory growth, blocking I/O, needless re-renders or
+                 reactivity churn in Svelte 5 code.
+
+            3. Security
+               - Injection (shell/git argument injection in the CLI, SQL, path
+                 traversal), unvalidated input in Hono routes, authn/authz gaps,
+                 OAuth/token and GitHub App credential handling, secrets in logs
+                 or responses, SSRF, XSS in SvelteKit, unsafe file locking or
+                 temp-file handling.
+
+            Rules:
+            - Report only real, actionable problems you can point to in the
+              diff. No praise, no style nitpicks Biome already enforces, no
+              speculative issues.
+            - Prefix each finding with its category: [consistency],
+              [performance] or [security], and a severity (high/medium/low).
+            - Post line-specific findings as inline comments with
+              `mcp__github_inline_comment__create_inline_comment`
+              (confirmed: true). Then post ONE short summary comment with
+              `gh pr comment` listing counts per category, or stating that no
+              issues were found.
+            - Do not modify any files.
+          claude_args: >-
+            --max-turns 25
+            --allowedTools
+            "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep"
