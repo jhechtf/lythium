@@ -6,6 +6,12 @@ import {
   type GithubCommitStatus,
 } from './checks.ts';
 import {
+  type FetchResult,
+  githubFetch,
+  isGithubName,
+  upstreamError,
+} from './github.ts';
+import {
   buildPRDetails,
   type GithubCheckRun,
   type GithubCommit,
@@ -48,30 +54,6 @@ interface GithubCompare {
 
 const MAX_STACK_DEPTH = 20;
 
-const githubHeaders = (token: string) => ({
-  Authorization: `Bearer ${token}`,
-  Accept: 'application/vnd.github+json',
-  'X-GitHub-Api-Version': '2022-11-28',
-  'User-Agent': 'lythium-api',
-});
-
-/**
- * GET from the GitHub API. Never throws: a network error or an unreadable
- * body comes back as a 502 result, so every caller's `upstreamError` mapping
- * applies instead of Hono's generic 500.
- */
-async function githubFetch(path: string, token: string) {
-  try {
-    const res = await fetch(`https://api.github.com${path}`, {
-      headers: githubHeaders(token),
-    });
-    const data: unknown = res.ok ? await res.json() : await res.text();
-    return { ok: res.ok, status: res.status, data, headers: res.headers };
-  } catch {
-    return { ok: false, status: 502, data: null, headers: new Headers() };
-  }
-}
-
 function shapePR(pr: GithubPR): StackPR {
   return {
     number: pr.number,
@@ -81,8 +63,6 @@ function shapePR(pr: GithubPR): StackPR {
     base: { ref: pr.base.ref, sha: pr.base.sha, label: pr.base.label },
   };
 }
-
-type FetchResult = Awaited<ReturnType<typeof githubFetch>>;
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 10;
@@ -164,38 +144,6 @@ async function githubFetchAllCounted<T>(
 }
 
 /**
- * GitHub answers 403 both for rate limits and for missing permissions. Only
- * the rate-limit kind says so: `x-ratelimit-remaining: 0` (primary) or a
- * `Retry-After` header (secondary).
- */
-const isRateLimited = (result: FetchResult) =>
-  result.status === 429 ||
-  (result.status === 403 &&
-    (result.headers.get('x-ratelimit-remaining') === '0' ||
-      result.headers.has('Retry-After')));
-
-function upstreamError(c: Context, result: FetchResult, prNumber: string) {
-  if (result.status === 401)
-    return c.json({ error: 'GitHub authentication failed' }, 401);
-  if (result.status === 404)
-    return c.json({ error: `PR #${prNumber} not found` }, 404);
-  if (result.status === 403 && !isRateLimited(result)) {
-    // Retrying won't help: the token lacks a permission (e.g. Checks: read).
-    return c.json({ error: 'GitHub denied access to this resource' }, 403);
-  }
-  if (isRateLimited(result)) {
-    const retryAfter = result.headers.get('Retry-After');
-    if (retryAfter) c.header('Retry-After', retryAfter);
-    return c.json({ error: 'GitHub rate limit exceeded', retryAfter }, 429);
-  }
-  return c.json({ error: 'GitHub API error' }, 502);
-}
-
-// GitHub owner/repo names: letters, digits, `-`, `_`, `.`.
-const NAME_RE = /^[A-Za-z0-9._-]{1,100}$/;
-const isName = (s: string) => NAME_RE.test(s) && s !== '.' && s !== '..';
-
-/**
  * Validate the route's repo and PR params and build the GitHub path prefix.
  * Hono URL-decodes params, so an unchecked `..%2F` would let a request reach
  * any GitHub endpoint with the caller's token. `encodeURIComponent` alone
@@ -203,7 +151,7 @@ const isName = (s: string) => NAME_RE.test(s) && s !== '.' && s !== '..';
  */
 function repoParams(c: Context) {
   const { owner, repo, pr_number } = c.req.param() as Record<string, string>;
-  if (!isName(owner) || !isName(repo)) {
+  if (!isGithubName(owner) || !isGithubName(repo)) {
     return { error: c.json({ error: 'Invalid owner or repo' }, 400) } as const;
   }
   if (!/^[1-9]\d{0,9}$/.test(pr_number)) {

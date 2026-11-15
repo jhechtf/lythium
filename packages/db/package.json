@@ -6,17 +6,21 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
   },
   "dependencies": {
     "drizzle-orm": "^0.41.0",
     "postgres": "^3.4.5"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15",
     "@types/node": "^24.0.0",
     "drizzle-kit": "^0.31.10",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^3.2.4"
   },
   "packageManager": "pnpm@10.33.0"
 }
