@@ -82,11 +82,7 @@
         "pull_requests_owner_repo_pr_number_unique": {
           "name": "pull_requests_owner_repo_pr_number_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "owner",
-            "repo",
-            "pr_number"
-          ]
+          "columns": ["owner", "repo", "pr_number"]
         }
       },
       "policies": {},
@@ -150,12 +146,8 @@
           "name": "review_group_files_group_id_review_groups_id_fk",
           "tableFrom": "review_group_files",
           "tableTo": "review_groups",
-          "columnsFrom": [
-            "group_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["group_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -201,12 +193,8 @@
           "name": "review_group_reviews_group_id_review_groups_id_fk",
           "tableFrom": "review_group_reviews",
           "tableTo": "review_groups",
-          "columnsFrom": [
-            "group_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["group_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -214,10 +202,7 @@
       "compositePrimaryKeys": {
         "review_group_reviews_group_id_user_id_pk": {
           "name": "review_group_reviews_group_id_user_id_pk",
-          "columns": [
-            "group_id",
-            "user_id"
-          ]
+          "columns": ["group_id", "user_id"]
         }
       },
       "uniqueConstraints": {},
@@ -391,11 +376,7 @@
       "compositePrimaryKeys": {
         "review_pr_heads_owner_repo_pr_number_pk": {
           "name": "review_pr_heads_owner_repo_pr_number_pk",
-          "columns": [
-            "owner",
-            "repo",
-            "pr_number"
-          ]
+          "columns": ["owner", "repo", "pr_number"]
         }
       },
       "uniqueConstraints": {},
@@ -533,12 +514,7 @@
         "stack_members_owner_repo_source_pr_number_member_pr_number_unique": {
           "name": "stack_members_owner_repo_source_pr_number_member_pr_number_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "owner",
-            "repo",
-            "source_pr_number",
-            "member_pr_number"
-          ]
+          "columns": ["owner", "repo", "source_pr_number", "member_pr_number"]
         }
       },
       "policies": {},
