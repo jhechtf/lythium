@@ -3,10 +3,11 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
-    # Only review changes to application / package code.
+    # Only review changes to application / package code and workflows.
     paths:
       - 'apps/**'
       - 'packages/**'
+      - '.github/workflows/**'
 
 # Cancel superseded reviews on the same PR.
 concurrency:
@@ -45,9 +46,9 @@ jobs:
             of each package the PR touches (apps/api, apps/web, packages/cli)
             before judging the code.
 
-            Scope: ONLY files under `apps/` and `packages/`. Ignore everything
-            else (docs, workflows, lockfiles, config, generated files) even if
-            it appears in the diff.
+            Scope: ONLY files under `apps/`, `packages/` and
+            `.github/workflows/`. Ignore everything else (docs, lockfiles,
+            config, generated files) even if it appears in the diff.
 
             Focus on exactly three areas:
 
@@ -71,6 +72,12 @@ jobs:
                  OAuth/token and GitHub App credential handling, secrets in logs
                  or responses, SSRF, XSS in SvelteKit, unsafe file locking or
                  temp-file handling.
+               - Workflow changes (`.github/workflows/`): script injection via
+                 `github.event.*` expressions interpolated into `run:` steps,
+                 broad `permissions`, `pull_request_target` or `workflow_run`
+                 checking out untrusted code, secrets exposed to forks or logs,
+                 unpinned third-party actions, and cache poisoning. Also check
+                 CI correctness and consistency with the existing workflows.
 
             Rules:
             - Report only real, actionable problems you can point to in the
