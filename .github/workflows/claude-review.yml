@@ -43,6 +43,8 @@ jobs:
           anthropic_service_account_id: svac_01HJwsBaSezkFyUZ5VZ6Q11Z
           anthropic_workspace_id: wrkspc_01AKArW7XDKiWjqo71i6RJkJ
           track_progress: true
+          # TEMP: debugging is_error:true with no usage. Remove once fixed.
+          show_full_output: true
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
