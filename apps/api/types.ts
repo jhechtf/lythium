@@ -93,7 +93,16 @@ export type CheckState = 'passed' | 'running' | 'failed' | 'skipped';
  * Overall CI state: `failed` if any check failed, else `running` if any is
  * still going, else `passed`. `none` means the head sha has no checks.
  */
-export type OverallCheckState = 'passed' | 'running' | 'failed' | 'none';
+/**
+ * `unknown`: the check list was too long to fetch in full and nothing seen
+ * failed or is running, so the PR can't be reported as passed.
+ */
+export type OverallCheckState =
+  | 'passed'
+  | 'running'
+  | 'failed'
+  | 'none'
+  | 'unknown';
 
 export interface PRCheck {
   name: string;
@@ -115,6 +124,8 @@ export interface PRChecksResponse {
   state: OverallCheckState;
   counts: Record<CheckState, number>;
   total: number;
+  /** True when GitHub had more checks than the API fetches (1000 per list). */
+  truncated: boolean;
   /** The build is the set of checks on the PR's head sha. */
   build: {
     sha: string;

@@ -340,13 +340,40 @@ describe('GET /repos/:source/:owner/:repo/pr/:pr_number', () => {
   it.each([
     [401, 401],
     [404, 404],
-    [403, 429],
+    [403, 403],
     [429, 429],
     [500, 502],
   ])('maps upstream %i to %i', async (upstream, expected) => {
     stubGithub({ '/pulls/7': () => json({ message: 'x' }, upstream) });
     const res = await get();
     expect(res.status).toBe(expected);
+  });
+
+  it.each([
+    ['x-ratelimit-remaining: 0', { 'x-ratelimit-remaining': '0' }],
+    ['Retry-After', { 'Retry-After': '60' }],
+  ])('maps a rate-limit 403 (%s) to 429', async (_label, headers) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 403, headers })),
+    );
+    expect((await get()).status).toBe(429);
+  });
+
+  it('keeps a permission 403 as 403 so clients stop retrying', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('{}', {
+            status: 403,
+            headers: { 'x-ratelimit-remaining': '4999' },
+          }),
+      ),
+    );
+    const res = await get();
+    expect(res.status).toBe(403);
+    expect(res.headers.get('Retry-After')).toBeNull();
   });
 
   it('maps a failing reviews call', async () => {

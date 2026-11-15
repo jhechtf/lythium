@@ -112,14 +112,18 @@ async function githubFetchAll<T>(
  * Like `githubFetchAll`, for endpoints that report `total_count`: fetch page
  * 1, then every remaining page in parallel (same request count, ~2 round
  * trips instead of up to MAX_PAGES). Falls back to paging serially when the
- * response has no count.
+ * response has no count. `truncated` is true when the MAX_PAGES cap left
+ * items unfetched, so callers must not treat the list as complete.
  */
 async function githubFetchAllCounted<T>(
   path: string,
   token: string,
   pick: (data: unknown) => T[],
   count: (data: unknown) => number | undefined,
-): Promise<{ ok: true; items: T[] } | { ok: false; result: FetchResult }> {
+): Promise<
+  | { ok: true; items: T[]; truncated: boolean }
+  | { ok: false; result: FetchResult }
+> {
   const sep = path.includes('?') ? '&' : '?';
   const pageUrl = (page: number) =>
     `${path}${sep}per_page=${PAGE_SIZE}&page=${page}`;
@@ -130,19 +134,23 @@ async function githubFetchAllCounted<T>(
   const total = count(first.data);
 
   if (typeof total !== 'number') {
-    if (items.length < PAGE_SIZE) return { ok: true, items };
+    if (items.length < PAGE_SIZE) return { ok: true, items, truncated: false };
     // No count: continue serially from page 2.
+    let lastFull = true;
     for (let page = 2; page <= MAX_PAGES; page++) {
       const result = await githubFetch(pageUrl(page), token);
       if (!result.ok) return { ok: false, result };
       const batch = pick(result.data);
       items.push(...batch);
-      if (batch.length < PAGE_SIZE) break;
+      lastFull = batch.length === PAGE_SIZE;
+      if (!lastFull) break;
     }
-    return { ok: true, items };
+    // A full last page at the cap means there may be more.
+    return { ok: true, items, truncated: lastFull };
   }
 
-  const pages = Math.min(Math.ceil(total / PAGE_SIZE), MAX_PAGES);
+  const needed = Math.ceil(total / PAGE_SIZE);
+  const pages = Math.min(needed, MAX_PAGES);
   const rest = await Promise.all(
     Array.from({ length: Math.max(pages - 1, 0) }, (_, i) =>
       githubFetch(pageUrl(i + 2), token),
@@ -152,15 +160,30 @@ async function githubFetchAllCounted<T>(
     if (!result.ok) return { ok: false, result };
     items.push(...pick(result.data));
   }
-  return { ok: true, items };
+  return { ok: true, items, truncated: needed > MAX_PAGES };
 }
+
+/**
+ * GitHub answers 403 both for rate limits and for missing permissions. Only
+ * the rate-limit kind says so: `x-ratelimit-remaining: 0` (primary) or a
+ * `Retry-After` header (secondary).
+ */
+const isRateLimited = (result: FetchResult) =>
+  result.status === 429 ||
+  (result.status === 403 &&
+    (result.headers.get('x-ratelimit-remaining') === '0' ||
+      result.headers.has('Retry-After')));
 
 function upstreamError(c: Context, result: FetchResult, prNumber: string) {
   if (result.status === 401)
     return c.json({ error: 'GitHub authentication failed' }, 401);
   if (result.status === 404)
     return c.json({ error: `PR #${prNumber} not found` }, 404);
-  if (result.status === 403 || result.status === 429) {
+  if (result.status === 403 && !isRateLimited(result)) {
+    // Retrying won't help: the token lacks a permission (e.g. Checks: read).
+    return c.json({ error: 'GitHub denied access to this resource' }, 403);
+  }
+  if (isRateLimited(result)) {
     const retryAfter = result.headers.get('Retry-After');
     if (retryAfter) c.header('Retry-After', retryAfter);
     return c.json({ error: 'GitHub rate limit exceeded', retryAfter }, 429);
@@ -410,6 +433,9 @@ export const app = new Hono()
         headSha,
         checkRuns: runsResult.items,
         statuses: statusesResult?.ok ? statusesResult.items : [],
+        truncated:
+          runsResult.truncated ||
+          (statusesResult?.ok === true && statusesResult.truncated),
       }),
     );
   });

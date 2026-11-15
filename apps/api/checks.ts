@@ -85,9 +85,14 @@ function shapeStatus(s: GithubCommitStatus): PRCheck {
   };
 }
 
-function overallState(counts: PRChecksResponse['counts']): OverallCheckState {
+function overallState(
+  counts: PRChecksResponse['counts'],
+  truncated: boolean,
+): OverallCheckState {
   if (counts.failed > 0) return 'failed';
   if (counts.running > 0) return 'running';
+  // Unfetched checks could be failing, so a partial list never "passed".
+  if (truncated) return 'unknown';
   if (counts.passed + counts.skipped > 0) return 'passed';
   return 'none';
 }
@@ -96,7 +101,10 @@ export function buildPRChecks(input: {
   headSha: string;
   checkRuns: GithubCheckRunFull[];
   statuses: GithubCommitStatus[];
+  /** More checks exist than were fetched. */
+  truncated?: boolean;
 }): PRChecksResponse {
+  const truncated = input.truncated ?? false;
   const checks = [
     ...input.checkRuns.map(shapeCheckRun),
     ...input.statuses.map(shapeStatus),
@@ -110,9 +118,10 @@ export function buildPRChecks(input: {
   const anyRunning = counts.running > 0;
 
   return {
-    state: overallState(counts),
+    state: overallState(counts, truncated),
     counts,
     total: checks.length,
+    truncated,
     build: {
       sha: input.headSha,
       short_sha: input.headSha.slice(0, 7),

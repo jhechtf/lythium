@@ -426,10 +426,80 @@ describe('GET /repos/:source/:owner/:repo/pr/:pr_number/checks', () => {
   it.each([
     [401, 401],
     [404, 404],
-    [403, 429],
+    [403, 403],
     [500, 502],
   ])('maps upstream %i on the PR to %i', async (upstream, expected) => {
     stubGithub({ '/pulls/7': () => json({ message: 'x' }, upstream) });
     expect((await get()).status).toBe(expected);
+  });
+
+  it('403s when the token cannot read check runs', async () => {
+    stubGithub({
+      '/pulls/7': () => json(pr),
+      '/check-runs': () =>
+        json(
+          { message: 'Resource not accessible by personal access token' },
+          403,
+        ),
+      '/status': () => json({ statuses: [] }),
+    });
+    expect((await get()).status).toBe(403);
+  });
+
+  it('does not report passed when the check list is capped', async () => {
+    // 1001 runs: the API fetches 10 pages (1000). The one it can't see
+    // could be failing, so the PR must not show as passed.
+    stubGithub({
+      '/pulls/7': () => json(pr),
+      '/check-runs': (u) =>
+        json({
+          total_count: 1001,
+          check_runs: Array.from({ length: 100 }, (_, i) =>
+            run({ id: Number(u.searchParams.get('page')) * 100 + i }),
+          ),
+        }),
+      '/status': () => json({ statuses: [] }),
+    });
+    const body = (await (await get()).json()) as {
+      state: string;
+      truncated: boolean;
+      total: number;
+    };
+    expect(body).toMatchObject({
+      state: 'unknown',
+      truncated: true,
+      total: 1000,
+    });
+  });
+
+  it('still reports a visible failure when the list is capped', async () => {
+    stubGithub({
+      '/pulls/7': () => json(pr),
+      '/check-runs': (u) =>
+        json({
+          total_count: 5000,
+          check_runs: Array.from({ length: 100 }, (_, i) =>
+            run({
+              id: Number(u.searchParams.get('page')) * 100 + i,
+              conclusion: i === 0 ? 'failure' : 'success',
+            }),
+          ),
+        }),
+      '/status': () => json({ statuses: [] }),
+    });
+    const body = (await (await get()).json()) as { state: string };
+    expect(body.state).toBe('failed');
+  });
+
+  it('is not truncated when every page was fetched', async () => {
+    stubGithub({
+      '/pulls/7': () => json(pr),
+      '/check-runs': () => json({ total_count: 1, check_runs: [run()] }),
+      '/status': () => json({ statuses: [] }),
+    });
+    expect(await (await get()).json()).toMatchObject({
+      state: 'passed',
+      truncated: false,
+    });
   });
 });
