@@ -121,6 +121,23 @@ export const reviewGroupReviews = pgTable(
   (t) => [primaryKey({ columns: [t.groupId, t.userId] })],
 );
 
+/**
+ * The newest head sha seen for a PR, and when GitHub reported it. A write
+ * compares its own observation against this under the PR lock, so a request
+ * that read the PR before a push can't delete state made after it.
+ */
+export const reviewPrHeads = pgTable(
+  'review_pr_heads',
+  {
+    owner: text('owner').notNull(),
+    repo: text('repo').notNull(),
+    prNumber: integer('pr_number').notNull(),
+    headSha: text('head_sha').notNull(),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.owner, t.repo, t.prNumber] })],
+);
+
 /** A user marked a file viewed at a given head sha. */
 export const reviewViewedFiles = pgTable(
   'review_viewed_files',

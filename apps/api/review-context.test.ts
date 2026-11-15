@@ -153,12 +153,24 @@ describe('resolvePR', () => {
         new Response(JSON.stringify({ head: { sha: SHA } })),
     );
     vi.stubGlobal('fetch', fetchMock);
-    expect(await resolvePR('t', 'o', 'r', 7)).toEqual({
+    const before = Date.now();
+    const result = await resolvePR('t', 'o', 'r', 7);
+    expect(result).toEqual({
       ok: true,
-      pr: { owner: 'o', repo: 'r', prNumber: 7, headSha: SHA },
+      pr: {
+        owner: 'o',
+        repo: 'r',
+        prNumber: 7,
+        headSha: SHA,
+        observedAt: expect.any(Date),
+      },
       authorId: null,
       canPush: false,
     });
+    // The observation is stamped when GitHub answers, for ordering writes.
+    const observedAt = (result as { pr: { observedAt: Date } }).pr.observedAt;
+    expect(observedAt.getTime()).toBeGreaterThanOrEqual(before);
+    expect(observedAt.getTime()).toBeLessThanOrEqual(Date.now());
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       'https://api.github.com/repos/o/r/pulls/7',
     );
@@ -171,11 +183,10 @@ describe('resolvePR', () => {
     );
     const mixed = await resolvePR('t', 'Foo', 'Bar', 7);
     const lower = await resolvePR('t', 'foo', 'bar', 7);
-    expect(mixed).toMatchObject({
-      ok: true,
-      pr: { owner: 'foo', repo: 'bar' },
-    });
-    expect(mixed).toEqual(lower);
+    const key = (r: typeof mixed) =>
+      r.ok ? [r.pr.owner, r.pr.repo, r.pr.prNumber, r.pr.headSha] : null;
+    expect(key(mixed)).toEqual(['foo', 'bar', 7, SHA]);
+    expect(key(mixed)).toEqual(key(lower));
   });
 
   it.each([

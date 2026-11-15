@@ -15,6 +15,7 @@ import {
   ReviewStateError,
   reorderGroups,
   replaceGroups,
+  StaleHeadError,
   setFileViewed,
   setGroupReviewed,
   updateGroup,
@@ -34,12 +35,23 @@ async function migratedDb() {
 const SHA = 'sha-1';
 const NEW_SHA = 'sha-2';
 // Editable, so the fixtures work for group writes and reads alike.
+// Fixed observation times, so which request read GitHub first is explicit.
+const T1 = new Date('2026-11-15T10:00:00Z');
+const T2 = new Date('2026-11-15T10:01:00Z');
 const PR = editablePR(
-  verifiedPR({ owner: 'o', repo: 'r', prNumber: 7, headSha: SHA }),
+  verifiedPR({
+    owner: 'o',
+    repo: 'r',
+    prNumber: 7,
+    headSha: SHA,
+    observedAt: T1,
+  }),
 );
 const OTHER_PR = editablePR(verifiedPR({ ...PR, prNumber: 8 }));
-/** The same PR after a push. */
-const PR_PUSHED = editablePR(verifiedPR({ ...PR, headSha: NEW_SHA }));
+/** The same PR after a push, read from GitHub a minute later. */
+const PR_PUSHED = editablePR(
+  verifiedPR({ ...PR, headSha: NEW_SHA, observedAt: T2 }),
+);
 /** Readable but not editable: someone without push access who didn't write it. */
 const READ_ONLY_PR = verifiedPR({ ...PR });
 const ALICE = 101;
@@ -52,7 +64,7 @@ describe('review state', () => {
   });
   beforeEach(async () => {
     await db.execute(
-      sql`truncate review_groups, review_group_files, review_group_reviews, review_viewed_files restart identity cascade`,
+      sql`truncate review_groups, review_group_files, review_group_reviews, review_viewed_files, review_pr_heads restart identity cascade`,
     );
   });
 
@@ -249,6 +261,60 @@ describe('review state', () => {
       expect(await db.select().from(schema.reviewGroups)).toEqual([]);
       expect(await db.select().from(schema.reviewGroupReviews)).toEqual([]);
       expect(await db.select().from(schema.reviewViewedFiles)).toEqual([]);
+    });
+
+    // A request reads the PR at the old head, then waits; a push lands and a
+    // second request writes at the new head; the first one finally writes.
+    it('rejects a write from before the push instead of deleting newer state', async () => {
+      const fresh = await createGroup(
+        db,
+        PR_PUSHED,
+        { name: 'new', files: [{ path: 'b.ts' }] },
+        ALICE,
+      );
+      await setFileViewed(db, PR_PUSHED, ALICE, 'b.ts', true);
+
+      // PR was observed at the old sha (T1), before PR_PUSHED's observation (T2).
+      await expect(
+        createGroup(db, PR, { name: 'late', files: [] }, BOB),
+      ).rejects.toBeInstanceOf(StaleHeadError);
+      await expect(
+        setFileViewed(db, PR, BOB, 'a.ts', true),
+      ).rejects.toBeInstanceOf(StaleHeadError);
+      await expect(deleteGroup(db, PR, fresh.id)).rejects.toBeInstanceOf(
+        StaleHeadError,
+      );
+      await expect(
+        replaceGroups(db, PR, [], 'ai', null),
+      ).rejects.toBeInstanceOf(StaleHeadError);
+
+      // The newer state is untouched.
+      expect((await listGroups(db, PR_PUSHED)).map((g) => g.id)).toEqual([
+        fresh.id,
+      ]);
+      expect((await getProgress(db, PR_PUSHED, ALICE)).viewedFiles).toEqual([
+        'b.ts',
+      ]);
+    });
+
+    it('lets an older observation of the same sha through', async () => {
+      await createGroup(db, PR_PUSHED, { name: 'a', files: [] }, ALICE);
+      const sameShaEarlier = editablePR(
+        verifiedPR({ ...PR, headSha: NEW_SHA, observedAt: T1 }),
+      );
+      await createGroup(db, sameShaEarlier, { name: 'b', files: [] }, ALICE);
+      expect(await listGroups(db, PR_PUSHED)).toHaveLength(2);
+    });
+
+    it('follows the head back after a force-push to an earlier sha', async () => {
+      await createGroup(db, PR, { name: 'old', files: [] }, ALICE);
+      await createGroup(db, PR_PUSHED, { name: 'mid', files: [] }, ALICE);
+      const T3 = new Date('2026-11-15T10:02:00Z');
+      const back = editablePR(verifiedPR({ ...PR, observedAt: T3 }));
+      await createGroup(db, back, { name: 'back', files: [] }, ALICE);
+      // Only the group made at the head GitHub reported last survives.
+      expect((await listGroups(db, back)).map((g) => g.name)).toEqual(['back']);
+      expect(await listGroups(db, PR_PUSHED)).toEqual([]);
     });
 
     it('does not touch other PRs', async () => {

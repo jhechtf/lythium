@@ -5,6 +5,7 @@ import {
   reviewGroupFiles,
   reviewGroupReviews,
   reviewGroups,
+  reviewPrHeads,
   reviewViewedFiles,
 } from './schema';
 
@@ -34,6 +35,14 @@ import {
  *
  * Writes take a per-PR advisory lock, so concurrent writes can't race past
  * the group cap or interleave a create with a reorder.
+ *
+ * The lock orders writes, but a `VerifiedPR` can be older than the write that
+ * uses it: a request can read the PR from GitHub, wait, and take the lock
+ * after a push and another request's writes. So each one carries `observedAt`
+ * (when GitHub answered), and `review_pr_heads` keeps the newest head seen.
+ * Under the lock, a write whose sha differs from a newer observation throws
+ * `StaleHeadError` instead of deleting newer state; a newer observation moves
+ * the head and discards the older sha's state.
  */
 
 /** Any Drizzle Postgres database built on this schema (postgres-js, PGlite). */
@@ -47,11 +56,14 @@ export type VerifiedPR = {
   readonly repo: string;
   readonly prNumber: number;
   readonly headSha: string;
+  /** When GitHub reported `headSha`. Orders this observation against others. */
+  readonly observedAt: Date;
 } & { readonly [verified]: true };
 
 /**
  * Mark a PR as verified. Only pass values from GitHub's pulls API fetched
- * with the caller's token, never values from the request.
+ * with the caller's token, never values from the request. Call it as soon as
+ * the response arrives: `observedAt` defaults to now.
  *
  * GitHub treats owner and repo names as case-insensitive, but the tables and
  * the write lock compare them as text. They are lowercased here so every
@@ -62,11 +74,13 @@ export function verifiedPR(pr: {
   repo: string;
   prNumber: number;
   headSha: string;
+  observedAt?: Date;
 }): VerifiedPR {
   return {
     ...pr,
     owner: pr.owner.toLowerCase(),
     repo: pr.repo.toLowerCase(),
+    observedAt: pr.observedAt ?? new Date(),
   } as VerifiedPR;
 }
 
@@ -120,6 +134,12 @@ export interface ReviewProgress {
 
 /** Invalid input. Routes should answer 400. */
 export class ReviewStateError extends Error {}
+
+/**
+ * The PR's head moved after this request read it from GitHub, and newer state
+ * exists. Routes should answer 409; the client can retry to get a fresh sha.
+ */
+export class StaleHeadError extends Error {}
 
 /** Input caps, enforced on every write. Groups are shared, so keep them tight. */
 export const REVIEW_LIMITS = {
@@ -270,20 +290,59 @@ async function lockPR(tx: ReviewDb, pr: VerifiedPR) {
   );
 }
 
-/** Start a write transaction: lock the PR, then drop state from older shas. */
+/**
+ * Start a write transaction: lock the PR, check this request's head sha isn't
+ * older than one already seen, then drop state from older shas.
+ */
 async function beginWrite(tx: ReviewDb, pr: VerifiedPR) {
   await lockPR(tx, pr);
+  const [seen] = await tx
+    .select()
+    .from(reviewPrHeads)
+    .where(
+      and(
+        eq(reviewPrHeads.owner, pr.owner),
+        eq(reviewPrHeads.repo, pr.repo),
+        eq(reviewPrHeads.prNumber, pr.prNumber),
+      ),
+    );
+  if (seen && seen.headSha !== pr.headSha) {
+    // A tie goes to the later write: ms resolution can't order the two.
+    if (seen.observedAt > pr.observedAt) {
+      throw new StaleHeadError(
+        'The PR head changed since it was read; fetch it again',
+      );
+    }
+  }
+  if (!seen || seen.observedAt <= pr.observedAt) {
+    await tx
+      .insert(reviewPrHeads)
+      .values({
+        owner: pr.owner,
+        repo: pr.repo,
+        prNumber: pr.prNumber,
+        headSha: pr.headSha,
+        observedAt: pr.observedAt,
+      })
+      .onConflictDoUpdate({
+        target: [
+          reviewPrHeads.owner,
+          reviewPrHeads.repo,
+          reviewPrHeads.prNumber,
+        ],
+        set: { headSha: pr.headSha, observedAt: pr.observedAt },
+      });
+  }
   await discardStaleState(tx, pr);
 }
 
 /**
  * Delete groups (with their files and reviewed marks) and viewed marks for
- * this PR that were made at any sha other than its current head.
+ * this PR that were made at any sha other than its current head. Only call
+ * it from `beginWrite`, after the staleness check: on its own it would delete
+ * newer state for an old observation.
  */
-export async function discardStaleState(
-  db: ReviewDb,
-  pr: VerifiedPR,
-): Promise<void> {
+async function discardStaleState(db: ReviewDb, pr: VerifiedPR): Promise<void> {
   await db
     .delete(reviewGroups)
     .where(and(prWhere(pr), ne(reviewGroups.headSha, pr.headSha)));
