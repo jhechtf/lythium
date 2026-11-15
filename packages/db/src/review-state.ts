@@ -133,7 +133,13 @@ export const REVIEW_LIMITS = {
    * limit: a real reviewer can't view more files than the diff has.
    */
   viewedFilesPerUser: 3000,
-  pathLength: 4096,
+  /**
+   * UTF-8 bytes. `review_viewed_files` indexes the whole path in its primary
+   * key, and Postgres rejects an index entry over about 2.7 kB, so a long,
+   * incompressible path would make `setFileViewed` fail. 1 kB plus the other
+   * key columns (owner and repo up to 100 each, 40-char sha) stays well under.
+   */
+  pathBytes: 1024,
   nameLength: 200,
   descriptionLength: 10_000,
 } as const;
@@ -142,9 +148,13 @@ function checkPath(path: string) {
   if (typeof path !== 'string' || path.length === 0) {
     throw new ReviewStateError('File path is required');
   }
-  if (path.length > REVIEW_LIMITS.pathLength) {
+  // A character is at least one byte, so this rejects without encoding.
+  if (
+    path.length > REVIEW_LIMITS.pathBytes ||
+    new TextEncoder().encode(path).length > REVIEW_LIMITS.pathBytes
+  ) {
     throw new ReviewStateError(
-      `File path is longer than ${REVIEW_LIMITS.pathLength} characters`,
+      `File path is longer than ${REVIEW_LIMITS.pathBytes} bytes`,
     );
   }
 }
@@ -289,18 +299,29 @@ export async function discardStaleState(
     );
 }
 
-/** Groups for the PR at its head sha, in display order, with their files. */
-export async function listGroups(
-  db: ReviewDb,
-  pr: VerifiedPR,
-): Promise<ReviewGroup[]> {
-  const groups = await db
+/**
+ * Run reads in one repeatable-read snapshot. A group and its files take two
+ * queries, and a write can commit between them; at the default read-committed
+ * level the reader would then return a group state that never existed.
+ */
+function snapshot<T>(db: ReviewDb, read: (q: ReviewDb) => Promise<T>) {
+  return db.transaction(read, {
+    isolationLevel: 'repeatable read',
+    accessMode: 'read only',
+  });
+}
+
+// The `read*` helpers take any query runner. Writes call them with their own
+// transaction, which holds the PR lock, so their result is the state they
+// just wrote. Readers go through `snapshot`.
+async function readGroups(q: ReviewDb, pr: VerifiedPR): Promise<ReviewGroup[]> {
+  const groups = await q
     .select()
     .from(reviewGroups)
     .where(currentGroupsWhere(pr))
     .orderBy(asc(reviewGroups.position), asc(reviewGroups.id));
   if (groups.length === 0) return [];
-  const files = await db
+  const files = await q
     .select()
     .from(reviewGroupFiles)
     .where(
@@ -313,23 +334,39 @@ export async function listGroups(
   return shapeGroups(groups, files);
 }
 
-/** One group with its files. Null if it isn't on this PR at its head sha. */
-export async function getGroup(
-  db: ReviewDb,
+async function readGroup(
+  q: ReviewDb,
   pr: VerifiedPR,
   groupId: number,
 ): Promise<ReviewGroup | null> {
-  const [group] = await db
+  const [group] = await q
     .select()
     .from(reviewGroups)
     .where(groupWhere(pr, groupId));
   if (!group) return null;
-  const files = await db
+  const files = await q
     .select()
     .from(reviewGroupFiles)
     .where(eq(reviewGroupFiles.groupId, groupId))
     .orderBy(asc(reviewGroupFiles.id));
   return shapeGroups([group], files)[0];
+}
+
+/** Groups for the PR at its head sha, in display order, with their files. */
+export function listGroups(
+  db: ReviewDb,
+  pr: VerifiedPR,
+): Promise<ReviewGroup[]> {
+  return snapshot(db, (q) => readGroups(q, pr));
+}
+
+/** One group with its files. Null if it isn't on this PR at its head sha. */
+export function getGroup(
+  db: ReviewDb,
+  pr: VerifiedPR,
+  groupId: number,
+): Promise<ReviewGroup | null> {
+  return snapshot(db, (q) => readGroup(q, pr, groupId));
 }
 
 /** Append a manually created group at the end of the list. */
@@ -340,7 +377,7 @@ export async function createGroup(
   createdBy: number,
 ): Promise<ReviewGroup> {
   const g = normalizeGroup(group);
-  const id = await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     await beginWrite(tx, pr);
     const [{ last, count }] = await tx
       .select({
@@ -373,10 +410,13 @@ export async function createGroup(
         .insert(reviewGroupFiles)
         .values(g.files.map((f) => ({ ...f, groupId: row.id })));
     }
-    return row.id;
+    // Read it back while the PR lock still holds, so another write can't
+    // delete it in between.
+    const created = await readGroup(tx, pr, row.id);
+    if (!created)
+      throw new Error('Created group is missing in its transaction');
+    return created;
   });
-  // biome-ignore lint/style/noNonNullAssertion: inserted in the transaction above.
-  return (await getGroup(db, pr, id))!;
 }
 
 /**
@@ -404,10 +444,10 @@ export async function replaceGroups(
     );
   }
 
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     await beginWrite(tx, pr);
     await tx.delete(reviewGroups).where(prWhere(pr));
-    if (normalized.length === 0) return;
+    if (normalized.length === 0) return [];
     const inserted = await tx
       .insert(reviewGroups)
       .values(
@@ -433,8 +473,8 @@ export async function replaceGroups(
     if (fileRows.length > 0) {
       await tx.insert(reviewGroupFiles).values(fileRows);
     }
+    return readGroups(tx, pr);
   });
-  return listGroups(db, pr);
 }
 
 /** Update a group's name, description and/or files. Null if not found. */
@@ -448,7 +488,7 @@ export async function updateGroup(
   checkDescription(patch.description);
   const files = patch.files ? normalizeFiles(patch.files) : undefined;
 
-  const found = await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     await beginWrite(tx, pr);
     const updated = await tx
       .update(reviewGroups)
@@ -461,7 +501,7 @@ export async function updateGroup(
       })
       .where(groupWhere(pr, groupId))
       .returning({ id: reviewGroups.id });
-    if (updated.length === 0) return false;
+    if (updated.length === 0) return null;
     if (files) {
       await tx
         .delete(reviewGroupFiles)
@@ -472,9 +512,8 @@ export async function updateGroup(
           .values(files.map((f) => ({ ...f, groupId })));
       }
     }
-    return true;
+    return readGroup(tx, pr, groupId);
   });
-  return found ? getGroup(db, pr, groupId) : null;
 }
 
 /** Set display order. `groupIds` must list exactly the PR's current groups. */
@@ -483,7 +522,7 @@ export async function reorderGroups(
   pr: EditablePR,
   groupIds: number[],
 ): Promise<ReviewGroup[]> {
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     await beginWrite(tx, pr);
     const current = await tx
       .select({ id: reviewGroups.id })
@@ -497,7 +536,7 @@ export async function reorderGroups(
     ) {
       throw new ReviewStateError('groupIds must list every group exactly once');
     }
-    if (groupIds.length === 0) return;
+    if (groupIds.length === 0) return [];
     // One statement: each group's new position is its index in groupIds.
     const ids = sql.join(
       groupIds.map((id) => sql`${id}`),
@@ -510,8 +549,8 @@ export async function reorderGroups(
         updatedAt: new Date(),
       })
       .where(currentGroupsWhere(pr));
+    return readGroups(tx, pr);
   });
-  return listGroups(db, pr);
 }
 
 /** Delete one group. False if it isn't on this PR at its head sha. */

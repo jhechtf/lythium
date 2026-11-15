@@ -16,6 +16,16 @@ export const githubHeaders = (token: string) => ({
   'User-Agent': 'lythium-api',
 });
 
+// GitHub owner/repo names: letters, digits, `-`, `_`, `.` (not `.` or `..`).
+const NAME_RE = /^[A-Za-z0-9._-]{1,100}$/;
+
+/**
+ * Is this a valid GitHub owner or repo name? It guards the path segments
+ * interpolated into GitHub URLs, so every route shares this one check.
+ */
+export const isGithubName = (s: string) =>
+  NAME_RE.test(s) && s !== '.' && s !== '..';
+
 export interface FetchResult {
   ok: boolean;
   /** Upstream status, 504 on timeout, 502 on a network error or bad body. */

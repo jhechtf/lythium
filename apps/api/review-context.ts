@@ -8,7 +8,12 @@ import {
   verifiedPR,
 } from '@lythium/db';
 import { createMiddleware } from 'hono/factory';
-import { type FetchResult, githubFetch, localFailure } from './github.ts';
+import {
+  type FetchResult,
+  githubFetch,
+  isGithubName,
+  localFailure,
+} from './github.ts';
 
 /**
  * Wiring for guided-review state (LYT-60). The API runs without a database:
@@ -115,10 +120,6 @@ export async function fetchViewer(
   return { ok: true, viewer };
 }
 
-// GitHub owner/repo names: letters, digits, `-`, `_`, `.` (not `.` or `..`).
-const NAME_RE = /^[A-Za-z0-9._-]{1,100}$/;
-const isName = (s: string) => NAME_RE.test(s) && s !== '.' && s !== '..';
-
 /** A PR read from GitHub, with what it says about the caller's access. */
 export interface ResolvedPR {
   pr: VerifiedPR;
@@ -150,7 +151,7 @@ export async function resolvePR(
   repo: string,
   prNumber: number,
 ): Promise<({ ok: true } & ResolvedPR) | LookupFailure> {
-  if (!isName(owner) || !isName(repo)) return fail(400);
+  if (!isGithubName(owner) || !isGithubName(repo)) return fail(400);
   if (!Number.isInteger(prNumber) || prNumber < 1) return fail(400);
   const result = await githubFetch(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}`,

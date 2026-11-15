@@ -337,7 +337,7 @@ describe('review state', () => {
         ['too many files', { name: 'x', files: many(L.filesPerGroup + 1) }],
         [
           'long path',
-          { name: 'x', files: [{ path: 'p'.repeat(L.pathLength + 1) }] },
+          { name: 'x', files: [{ path: 'p'.repeat(L.pathBytes + 1) }] },
         ],
         ['long name', { name: 'n'.repeat(L.nameLength + 1), files: [] }],
         ['blank name', { name: '  ', files: [] }],
@@ -362,7 +362,7 @@ describe('review state', () => {
           {
             name: 'n'.repeat(L.nameLength),
             description: 'd'.repeat(L.descriptionLength),
-            files: [{ path: 'p'.repeat(L.pathLength) }],
+            files: [{ path: 'p'.repeat(L.pathBytes) }],
           },
           ALICE,
         );
@@ -393,6 +393,22 @@ describe('review state', () => {
             'ai',
             null,
           ),
+        ).rejects.toBeInstanceOf(ReviewStateError);
+      });
+
+      it('caps paths in bytes, not characters', async () => {
+        // 'é' is 2 bytes in UTF-8: half the byte limit in characters is the max.
+        const atLimit = 'é'.repeat(L.pathBytes / 2);
+        const over = `${atLimit}x`;
+        await setFileViewed(db, PR, ALICE, atLimit, true);
+        expect((await getProgress(db, PR, ALICE)).viewedFiles).toEqual([
+          atLimit,
+        ]);
+        await expect(
+          setFileViewed(db, PR, ALICE, over, true),
+        ).rejects.toBeInstanceOf(ReviewStateError);
+        await expect(
+          createGroup(db, PR, { name: 'x', files: [{ path: over }] }, ALICE),
         ).rejects.toBeInstanceOf(ReviewStateError);
       });
 
@@ -431,7 +447,7 @@ describe('review state', () => {
           updateGroup(db, PR, g.id, { name: 'n'.repeat(L.nameLength + 1) }),
         ).rejects.toBeInstanceOf(ReviewStateError);
         await expect(
-          setFileViewed(db, PR, ALICE, 'p'.repeat(L.pathLength + 1), true),
+          setFileViewed(db, PR, ALICE, 'p'.repeat(L.pathBytes + 1), true),
         ).rejects.toBeInstanceOf(ReviewStateError);
       });
     });

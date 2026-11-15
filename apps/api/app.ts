@@ -5,7 +5,12 @@ import {
   type GithubCheckRunFull,
   type GithubCommitStatus,
 } from './checks.ts';
-import { type FetchResult, githubFetch, upstreamError } from './github.ts';
+import {
+  type FetchResult,
+  githubFetch,
+  isGithubName,
+  upstreamError,
+} from './github.ts';
 import {
   buildPRDetails,
   type GithubCheckRun,
@@ -138,10 +143,6 @@ async function githubFetchAllCounted<T>(
   return { ok: true, items, truncated: needed > MAX_PAGES };
 }
 
-// GitHub owner/repo names: letters, digits, `-`, `_`, `.`.
-const NAME_RE = /^[A-Za-z0-9._-]{1,100}$/;
-const isName = (s: string) => NAME_RE.test(s) && s !== '.' && s !== '..';
-
 /**
  * Validate the route's repo and PR params and build the GitHub path prefix.
  * Hono URL-decodes params, so an unchecked `..%2F` would let a request reach
@@ -150,7 +151,7 @@ const isName = (s: string) => NAME_RE.test(s) && s !== '.' && s !== '..';
  */
 function repoParams(c: Context) {
   const { owner, repo, pr_number } = c.req.param() as Record<string, string>;
-  if (!isName(owner) || !isName(repo)) {
+  if (!isGithubName(owner) || !isGithubName(repo)) {
     return { error: c.json({ error: 'Invalid owner or repo' }, 400) } as const;
   }
   if (!/^[1-9]\d{0,9}$/.test(pr_number)) {
