@@ -164,6 +164,20 @@ describe('resolvePR', () => {
     );
   });
 
+  it('gives every casing of a repo the same key', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ head: { sha: SHA } }))),
+    );
+    const mixed = await resolvePR('t', 'Foo', 'Bar', 7);
+    const lower = await resolvePR('t', 'foo', 'bar', 7);
+    expect(mixed).toMatchObject({
+      ok: true,
+      pr: { owner: 'foo', repo: 'bar' },
+    });
+    expect(mixed).toEqual(lower);
+  });
+
   it.each([
     ['..', 'r', 7],
     ['o', 'a/b', 7],

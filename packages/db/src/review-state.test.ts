@@ -396,6 +396,35 @@ describe('review state', () => {
         ).rejects.toBeInstanceOf(ReviewStateError);
       });
 
+      it('caps viewed files per user, per PR', async () => {
+        // Seed straight to the limit; one call per file would be slow.
+        await db.insert(schema.reviewViewedFiles).values(
+          Array.from({ length: L.viewedFilesPerUser }, (_, i) => ({
+            owner: PR.owner,
+            repo: PR.repo,
+            prNumber: PR.prNumber,
+            headSha: PR.headSha,
+            userId: ALICE,
+            path: `f${i}`,
+          })),
+        );
+        await expect(
+          setFileViewed(db, PR, ALICE, 'one-too-many', true),
+        ).rejects.toBeInstanceOf(ReviewStateError);
+        const { viewedFiles } = await getProgress(db, PR, ALICE);
+        expect(viewedFiles).toHaveLength(L.viewedFilesPerUser);
+        expect(viewedFiles).not.toContain('one-too-many');
+
+        // Re-marking a viewed file, unmarking, and other users still work.
+        await setFileViewed(db, PR, ALICE, 'f0', true);
+        await setFileViewed(db, PR, BOB, 'one-too-many', true);
+        await setFileViewed(db, PR, ALICE, 'f0', false);
+        await setFileViewed(db, PR, ALICE, 'one-too-many', true);
+        expect((await getProgress(db, PR, ALICE)).viewedFiles).toContain(
+          'one-too-many',
+        );
+      });
+
       it('updateGroup and setFileViewed enforce the same caps', async () => {
         const g = await createGroup(db, PR, { name: 'a', files: [] }, ALICE);
         await expect(
@@ -436,6 +465,41 @@ describe('review state', () => {
         reviewedGroupIds: [g.id],
         viewedFiles: ['a.ts'],
       });
+    });
+  });
+
+  describe('write path consistency', () => {
+    it('deleteGroup discards state from older shas like every other write', async () => {
+      const g = await createGroup(db, PR, { name: 'A', files: [] }, ALICE);
+      await setFileViewed(db, PR, ALICE, 'a.ts', true);
+
+      // The PR moved on. A delete at the new sha finds nothing to delete, but
+      // must still drop the old sha's groups and viewed marks.
+      expect(await deleteGroup(db, PR_PUSHED, g.id)).toBe(false);
+      expect(await db.select().from(schema.reviewGroups)).toHaveLength(0);
+      expect(await db.select().from(schema.reviewViewedFiles)).toHaveLength(0);
+    });
+
+    it('deleteGroup still deletes a current group', async () => {
+      const a = await createGroup(db, PR, { name: 'A', files: [] }, ALICE);
+      const b = await createGroup(db, PR, { name: 'B', files: [] }, ALICE);
+      expect(await deleteGroup(db, PR, a.id)).toBe(true);
+      expect(await deleteGroup(db, PR, a.id)).toBe(false);
+      expect((await listGroups(db, PR)).map((g) => g.id)).toEqual([b.id]);
+    });
+
+    it('treats owner and repo case-insensitively, like GitHub', async () => {
+      const shouty = editablePR(
+        verifiedPR({ owner: 'O', repo: 'R', prNumber: 7, headSha: SHA }),
+      );
+      expect(shouty.owner).toBe('o');
+      expect(shouty.repo).toBe('r');
+
+      const g = await createGroup(db, shouty, { name: 'A', files: [] }, ALICE);
+      await setFileViewed(db, shouty, ALICE, 'a.ts', true);
+      // Same PR under the other spelling: one set of groups and marks.
+      expect((await listGroups(db, PR)).map((x) => x.id)).toEqual([g.id]);
+      expect((await getProgress(db, PR, ALICE)).viewedFiles).toEqual(['a.ts']);
     });
   });
 

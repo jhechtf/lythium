@@ -52,6 +52,10 @@ export type VerifiedPR = {
 /**
  * Mark a PR as verified. Only pass values from GitHub's pulls API fetched
  * with the caller's token, never values from the request.
+ *
+ * GitHub treats owner and repo names as case-insensitive, but the tables and
+ * the write lock compare them as text. They are lowercased here so every
+ * spelling of a PR's URL shares one set of groups, marks and one lock.
  */
 export function verifiedPR(pr: {
   owner: string;
@@ -59,7 +63,11 @@ export function verifiedPR(pr: {
   prNumber: number;
   headSha: string;
 }): VerifiedPR {
-  return { ...pr } as VerifiedPR;
+  return {
+    ...pr,
+    owner: pr.owner.toLowerCase(),
+    repo: pr.repo.toLowerCase(),
+  } as VerifiedPR;
 }
 
 declare const editable: unique symbol;
@@ -120,6 +128,11 @@ export const REVIEW_LIMITS = {
   /** Total file entries in one `replaceGroups` call. */
   filesPerReplace: 10_000,
   groupsPerPR: 200,
+  /**
+   * Viewed marks one user can hold on a PR at its head sha. Same as the diff
+   * limit: a real reviewer can't view more files than the diff has.
+   */
+  viewedFilesPerUser: 3000,
   pathLength: 4096,
   nameLength: 200,
   descriptionLength: 10_000,
@@ -507,11 +520,14 @@ export async function deleteGroup(
   pr: EditablePR,
   groupId: number,
 ): Promise<boolean> {
-  const deleted = await db
-    .delete(reviewGroups)
-    .where(groupWhere(pr, groupId))
-    .returning({ id: reviewGroups.id });
-  return deleted.length > 0;
+  return db.transaction(async (tx) => {
+    await beginWrite(tx, pr);
+    const deleted = await tx
+      .delete(reviewGroups)
+      .where(groupWhere(pr, groupId))
+      .returning({ id: reviewGroups.id });
+    return deleted.length > 0;
+  });
 }
 
 /** Mark or unmark a group reviewed for one user. False if no such group. */
@@ -568,7 +584,33 @@ export async function setFileViewed(
       path,
     };
     if (viewed) {
-      await tx.insert(reviewViewedFiles).values(key).onConflictDoNothing();
+      const inserted = await tx
+        .insert(reviewViewedFiles)
+        .values(key)
+        .onConflictDoNothing()
+        .returning({ id: reviewViewedFiles.path });
+      // Only a new mark can push the user over the cap; re-marking a file
+      // that's already viewed stays fine at the limit. The PR is locked, so
+      // this count can't race another write. Throwing rolls the insert back.
+      if (inserted.length > 0) {
+        const [{ count }] = await tx
+          .select({ count: sql<number>`count(*)::int` })
+          .from(reviewViewedFiles)
+          .where(
+            and(
+              eq(reviewViewedFiles.owner, key.owner),
+              eq(reviewViewedFiles.repo, key.repo),
+              eq(reviewViewedFiles.prNumber, key.prNumber),
+              eq(reviewViewedFiles.headSha, key.headSha),
+              eq(reviewViewedFiles.userId, key.userId),
+            ),
+          );
+        if (count > REVIEW_LIMITS.viewedFilesPerUser) {
+          throw new ReviewStateError(
+            `At most ${REVIEW_LIMITS.viewedFilesPerUser} files can be marked viewed per PR`,
+          );
+        }
+      }
     } else {
       await tx
         .delete(reviewViewedFiles)
