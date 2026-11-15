@@ -1,6 +1,11 @@
 import { type Context, Hono } from 'hono';
 import { cors } from 'hono/cors';
 import {
+  buildPRChecks,
+  type GithubCheckRunFull,
+  type GithubCommitStatus,
+} from './checks.ts';
+import {
   buildPRDetails,
   type GithubCheckRun,
   type GithubCommit,
@@ -9,6 +14,7 @@ import {
 } from './pr-details.ts';
 import type {
   DiffFile,
+  PRChecksResponse,
   PRDetailsResponse,
   StackDiffResponse,
   StackItem,
@@ -49,12 +55,21 @@ const githubHeaders = (token: string) => ({
   'User-Agent': 'lythium-api',
 });
 
+/**
+ * GET from the GitHub API. Never throws: a network error or an unreadable
+ * body comes back as a 502 result, so every caller's `upstreamError` mapping
+ * applies instead of Hono's generic 500.
+ */
 async function githubFetch(path: string, token: string) {
-  const res = await fetch(`https://api.github.com${path}`, {
-    headers: githubHeaders(token),
-  });
-  const data = res.ok ? await res.json() : await res.text();
-  return { ok: res.ok, status: res.status, data, headers: res.headers };
+  try {
+    const res = await fetch(`https://api.github.com${path}`, {
+      headers: githubHeaders(token),
+    });
+    const data: unknown = res.ok ? await res.json() : await res.text();
+    return { ok: res.ok, status: res.status, data, headers: res.headers };
+  } catch {
+    return { ok: false, status: 502, data: null, headers: new Headers() };
+  }
 }
 
 function shapePR(pr: GithubPR): StackPR {
@@ -93,17 +108,113 @@ async function githubFetchAll<T>(
   return { ok: true, items };
 }
 
+/**
+ * Like `githubFetchAll`, for endpoints that report `total_count`: fetch page
+ * 1, then every remaining page in parallel (same request count, ~2 round
+ * trips instead of up to MAX_PAGES). Falls back to paging serially when the
+ * response has no count. `truncated` is true when the MAX_PAGES cap left
+ * items unfetched, so callers must not treat the list as complete.
+ */
+async function githubFetchAllCounted<T>(
+  path: string,
+  token: string,
+  pick: (data: unknown) => T[],
+  count: (data: unknown) => number | undefined,
+): Promise<
+  | { ok: true; items: T[]; truncated: boolean }
+  | { ok: false; result: FetchResult }
+> {
+  const sep = path.includes('?') ? '&' : '?';
+  const pageUrl = (page: number) =>
+    `${path}${sep}per_page=${PAGE_SIZE}&page=${page}`;
+
+  const first = await githubFetch(pageUrl(1), token);
+  if (!first.ok) return { ok: false, result: first };
+  const items = pick(first.data);
+  const total = count(first.data);
+
+  if (typeof total !== 'number') {
+    if (items.length < PAGE_SIZE) return { ok: true, items, truncated: false };
+    // No count: continue serially from page 2.
+    let lastFull = true;
+    for (let page = 2; page <= MAX_PAGES; page++) {
+      const result = await githubFetch(pageUrl(page), token);
+      if (!result.ok) return { ok: false, result };
+      const batch = pick(result.data);
+      items.push(...batch);
+      lastFull = batch.length === PAGE_SIZE;
+      if (!lastFull) break;
+    }
+    // A full last page at the cap means there may be more.
+    return { ok: true, items, truncated: lastFull };
+  }
+
+  const needed = Math.ceil(total / PAGE_SIZE);
+  const pages = Math.min(needed, MAX_PAGES);
+  const rest = await Promise.all(
+    Array.from({ length: Math.max(pages - 1, 0) }, (_, i) =>
+      githubFetch(pageUrl(i + 2), token),
+    ),
+  );
+  for (const result of rest) {
+    if (!result.ok) return { ok: false, result };
+    items.push(...pick(result.data));
+  }
+  return { ok: true, items, truncated: needed > MAX_PAGES };
+}
+
+/**
+ * GitHub answers 403 both for rate limits and for missing permissions. Only
+ * the rate-limit kind says so: `x-ratelimit-remaining: 0` (primary) or a
+ * `Retry-After` header (secondary).
+ */
+const isRateLimited = (result: FetchResult) =>
+  result.status === 429 ||
+  (result.status === 403 &&
+    (result.headers.get('x-ratelimit-remaining') === '0' ||
+      result.headers.has('Retry-After')));
+
 function upstreamError(c: Context, result: FetchResult, prNumber: string) {
   if (result.status === 401)
     return c.json({ error: 'GitHub authentication failed' }, 401);
   if (result.status === 404)
     return c.json({ error: `PR #${prNumber} not found` }, 404);
-  if (result.status === 403 || result.status === 429) {
+  if (result.status === 403 && !isRateLimited(result)) {
+    // Retrying won't help: the token lacks a permission (e.g. Checks: read).
+    return c.json({ error: 'GitHub denied access to this resource' }, 403);
+  }
+  if (isRateLimited(result)) {
     const retryAfter = result.headers.get('Retry-After');
     if (retryAfter) c.header('Retry-After', retryAfter);
     return c.json({ error: 'GitHub rate limit exceeded', retryAfter }, 429);
   }
   return c.json({ error: 'GitHub API error' }, 502);
+}
+
+// GitHub owner/repo names: letters, digits, `-`, `_`, `.`.
+const NAME_RE = /^[A-Za-z0-9._-]{1,100}$/;
+const isName = (s: string) => NAME_RE.test(s) && s !== '.' && s !== '..';
+
+/**
+ * Validate the route's repo and PR params and build the GitHub path prefix.
+ * Hono URL-decodes params, so an unchecked `..%2F` would let a request reach
+ * any GitHub endpoint with the caller's token. `encodeURIComponent` alone
+ * doesn't stop `..` (fetch resolves dot segments), hence the name check.
+ */
+function repoParams(c: Context) {
+  const { owner, repo, pr_number } = c.req.param() as Record<string, string>;
+  if (!isName(owner) || !isName(repo)) {
+    return { error: c.json({ error: 'Invalid owner or repo' }, 400) } as const;
+  }
+  if (!/^[1-9]\d{0,9}$/.test(pr_number)) {
+    return { error: c.json({ error: 'Invalid PR number' }, 400) } as const;
+  }
+  return {
+    owner,
+    repo,
+    pr_number,
+    base: `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+  } as const;
 }
 
 // Hosting platforms we can talk to. `:source` in the URL selects one; only
@@ -132,13 +243,12 @@ export const app = new Hono()
     }
     const token = authHeader.slice(7);
 
-    const { owner, repo, pr_number } = c.req.param();
+    const params = repoParams(c);
+    if ('error' in params) return params.error;
+    const { owner, pr_number, base } = params;
 
     // Fetch the starting PR
-    const startResult = await githubFetch(
-      `/repos/${owner}/${repo}/pulls/${pr_number}`,
-      token,
-    );
+    const startResult = await githubFetch(`${base}/pulls/${pr_number}`, token);
     if (!startResult.ok) return upstreamError(c, startResult, pr_number);
 
     // Walk UP the stack: follow base.ref to find parent PRs
@@ -148,7 +258,7 @@ export const app = new Hono()
     for (let i = 0; i < MAX_STACK_DEPTH - 1; i++) {
       const parentBranch = current.base.ref;
       const searchResult = await githubFetch(
-        `/repos/${owner}/${repo}/pulls?head=${encodeURIComponent(owner)}:${encodeURIComponent(parentBranch)}&state=open`,
+        `${base}/pulls?head=${encodeURIComponent(owner)}:${encodeURIComponent(parentBranch)}&state=open`,
         token,
       );
       if (
@@ -167,7 +277,7 @@ export const app = new Hono()
     const stack: StackItem[] = [];
     for (const pr of prs) {
       const compareResult = await githubFetch(
-        `/repos/${owner}/${repo}/compare/${pr.base.sha}...${pr.head.sha}`,
+        `${base}/compare/${pr.base.sha}...${pr.head.sha}`,
         token,
       );
 
@@ -214,8 +324,9 @@ export const app = new Hono()
       return c.json({ error: 'Missing or invalid Authorization header' }, 401);
     }
     const token = authHeader.slice(7);
-    const { owner, repo, pr_number } = c.req.param();
-    const base = `/repos/${owner}/${repo}`;
+    const params = repoParams(c);
+    if ('error' in params) return params.error;
+    const { owner, pr_number, base } = params;
 
     const prResult = await githubFetch(`${base}/pulls/${pr_number}`, token);
     if (!prResult.ok) return upstreamError(c, prResult, pr_number);
@@ -273,6 +384,58 @@ export const app = new Hono()
         latestCommit: (commitResult.data as GithubCommit[])[0],
         checks,
         parentPr,
+      }),
+    );
+  })
+  .get('/repos/:source/:owner/:repo/pr/:pr_number/checks', async (c) => {
+    const badSource = unsupportedSource(c, c.req.param('source'));
+    if (badSource) return badSource;
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return c.json({ error: 'Missing or invalid Authorization header' }, 401);
+    }
+    const token = authHeader.slice(7);
+    const params = repoParams(c);
+    if ('error' in params) return params.error;
+    const { pr_number, base } = params;
+
+    const prResult = await githubFetch(`${base}/pulls/${pr_number}`, token);
+    if (!prResult.ok) return upstreamError(c, prResult, pr_number);
+    const headSha = (prResult.data as { head?: { sha?: unknown } } | null)?.head
+      ?.sha;
+    if (typeof headSha !== 'string' || !/^[0-9a-f]{40}$/i.test(headSha)) {
+      return c.json({ error: 'Unexpected GitHub response' }, 502);
+    }
+
+    const totalCount = (d: unknown) =>
+      (d as { total_count?: number } | null)?.total_count;
+    const [runsResult, statusesResult] = await Promise.all([
+      githubFetchAllCounted<GithubCheckRunFull>(
+        `${base}/commits/${headSha}/check-runs`,
+        token,
+        (d) => (d as { check_runs?: GithubCheckRunFull[] }).check_runs ?? [],
+        totalCount,
+      ),
+      // Legacy commit statuses are a supplement: tokens often lack the
+      // permission, so a failure here must not fail the request.
+      githubFetchAllCounted<GithubCommitStatus>(
+        `${base}/commits/${headSha}/status`,
+        token,
+        (d) => (d as { statuses?: GithubCommitStatus[] }).statuses ?? [],
+        totalCount,
+      ).catch(() => null),
+    ]);
+
+    if (!runsResult.ok) return upstreamError(c, runsResult.result, pr_number);
+
+    return c.json<PRChecksResponse>(
+      buildPRChecks({
+        headSha,
+        checkRuns: runsResult.items,
+        statuses: statusesResult?.ok ? statusesResult.items : [],
+        truncated:
+          runsResult.truncated ||
+          (statusesResult?.ok === true && statusesResult.truncated),
       }),
     );
   });

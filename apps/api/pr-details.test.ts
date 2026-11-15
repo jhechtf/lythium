@@ -291,6 +291,39 @@ describe('GET /repos/:source/:owner/:repo/pr/:pr_number', () => {
     expect(body.reviewers[100]?.login).toBe('last');
   });
 
+  it.each([
+    '/pulls/7',
+    '/reviews',
+    '/commits',
+  ])('502s when the required %s lookup throws a network error', async (failing) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const path = new URL(url).pathname;
+        if (path.endsWith(failing)) throw new TypeError('fetch failed');
+        if (path.endsWith('/pulls/7')) return json(basePR());
+        if (path.endsWith('/reviews')) return json([]);
+        if (path.endsWith('/commits')) return json([commit]);
+        if (path.endsWith('/check-runs')) return json({ check_runs: [] });
+        return json([]);
+      }),
+    );
+    expect((await get()).status).toBe(502);
+  });
+
+  it("502s when the diff route's PR lookup throws a network error", async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed');
+      }),
+    );
+    const res = await app.request('/repos/github/o/r/pr/7/diff', {
+      headers: { Authorization: 'Bearer t' },
+    });
+    expect(res.status).toBe(502);
+  });
+
   it('forwards Retry-After on rate limiting', async () => {
     vi.stubGlobal(
       'fetch',
@@ -307,13 +340,40 @@ describe('GET /repos/:source/:owner/:repo/pr/:pr_number', () => {
   it.each([
     [401, 401],
     [404, 404],
-    [403, 429],
+    [403, 403],
     [429, 429],
     [500, 502],
   ])('maps upstream %i to %i', async (upstream, expected) => {
     stubGithub({ '/pulls/7': () => json({ message: 'x' }, upstream) });
     const res = await get();
     expect(res.status).toBe(expected);
+  });
+
+  it.each([
+    ['x-ratelimit-remaining: 0', { 'x-ratelimit-remaining': '0' }],
+    ['Retry-After', { 'Retry-After': '60' }],
+  ])('maps a rate-limit 403 (%s) to 429', async (_label, headers) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 403, headers })),
+    );
+    expect((await get()).status).toBe(429);
+  });
+
+  it('keeps a permission 403 as 403 so clients stop retrying', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('{}', {
+            status: 403,
+            headers: { 'x-ratelimit-remaining': '4999' },
+          }),
+      ),
+    );
+    const res = await get();
+    expect(res.status).toBe(403);
+    expect(res.headers.get('Retry-After')).toBeNull();
   });
 
   it('maps a failing reviews call', async () => {
