@@ -297,6 +297,40 @@ describe('review state', () => {
       ]);
     });
 
+    // Same-sha writes skip the discard, but must keep the newest observation
+    // time: a different sha seen *between* two observations of this one is
+    // older than the later of them and must not take over the head.
+    it('keeps the newest observation time across same-sha writes', async () => {
+      const at = (s: string) => new Date(`2026-11-15T10:${s}Z`);
+      const obs = (headSha: string, t: Date) =>
+        editablePR(verifiedPR({ ...PR, headSha, observedAt: t }));
+
+      await createGroup(db, obs(SHA, at('00:00')), { name: 'a', files: [] }, 1);
+      // A later read of the same sha moves the recorded time forward...
+      await setFileViewed(db, obs(SHA, at('05:00')), ALICE, 'a.ts', true);
+      // ...and an earlier one doesn't move it back.
+      await setFileViewed(db, obs(SHA, at('01:00')), ALICE, 'b.ts', true);
+
+      // A different sha read at 03:00 is older than the 05:00 read of SHA.
+      await expect(
+        createGroup(db, obs(NEW_SHA, at('03:00')), { name: 'x', files: [] }, 1),
+      ).rejects.toBeInstanceOf(StaleHeadError);
+      expect((await listGroups(db, PR)).map((g) => g.name)).toEqual(['a']);
+      expect((await getProgress(db, PR, ALICE)).viewedFiles).toEqual([
+        'a.ts',
+        'b.ts',
+      ]);
+
+      // One read after the last SHA observation does take over.
+      await createGroup(
+        db,
+        obs(NEW_SHA, at('06:00')),
+        { name: 'n', files: [] },
+        1,
+      );
+      expect(await listGroups(db, PR)).toEqual([]);
+    });
+
     it('lets an older observation of the same sha through', async () => {
       await createGroup(db, PR_PUSHED, { name: 'a', files: [] }, ALICE);
       const sameShaEarlier = editablePR(

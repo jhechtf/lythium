@@ -306,33 +306,49 @@ async function beginWrite(tx: ReviewDb, pr: VerifiedPR) {
         eq(reviewPrHeads.prNumber, pr.prNumber),
       ),
     );
-  if (seen && seen.headSha !== pr.headSha) {
-    // A tie goes to the later write: ms resolution can't order the two.
-    if (seen.observedAt > pr.observedAt) {
-      throw new StaleHeadError(
-        'The PR head changed since it was read; fetch it again',
-      );
+  const head = { headSha: pr.headSha, observedAt: pr.observedAt };
+
+  if (seen && seen.headSha === pr.headSha) {
+    // The common case: every tick of a file or group. State for other shas
+    // was discarded when this sha was recorded, and any write at another sha
+    // either was rejected or moved the head, so there is nothing to delete.
+    // Still keep the newest observation time: a later request at a different
+    // sha is judged against it (an older one must not displace this head).
+    // `observed_at` is unindexed, so this is a cheap in-place update.
+    if (seen.observedAt < pr.observedAt) {
+      await tx
+        .update(reviewPrHeads)
+        .set({ observedAt: pr.observedAt })
+        .where(
+          and(
+            eq(reviewPrHeads.owner, pr.owner),
+            eq(reviewPrHeads.repo, pr.repo),
+            eq(reviewPrHeads.prNumber, pr.prNumber),
+          ),
+        );
     }
+    return;
   }
-  if (!seen || seen.observedAt <= pr.observedAt) {
-    await tx
-      .insert(reviewPrHeads)
-      .values({
-        owner: pr.owner,
-        repo: pr.repo,
-        prNumber: pr.prNumber,
-        headSha: pr.headSha,
-        observedAt: pr.observedAt,
-      })
-      .onConflictDoUpdate({
-        target: [
-          reviewPrHeads.owner,
-          reviewPrHeads.repo,
-          reviewPrHeads.prNumber,
-        ],
-        set: { headSha: pr.headSha, observedAt: pr.observedAt },
-      });
+
+  // A tie goes to the later write: ms resolution can't order the two.
+  if (seen && seen.observedAt > pr.observedAt) {
+    throw new StaleHeadError(
+      'The PR head changed since it was read; fetch it again',
+    );
   }
+  // First write for this PR, or a newer head: record it, drop older shas.
+  await tx
+    .insert(reviewPrHeads)
+    .values({
+      owner: pr.owner,
+      repo: pr.repo,
+      prNumber: pr.prNumber,
+      ...head,
+    })
+    .onConflictDoUpdate({
+      target: [reviewPrHeads.owner, reviewPrHeads.repo, reviewPrHeads.prNumber],
+      set: head,
+    });
   await discardStaleState(tx, pr);
 }
 
@@ -727,50 +743,56 @@ export async function setFileViewed(
 }
 
 /** One user's progress on the PR at its head sha. */
-export async function getProgress(
+export function getProgress(
   db: ReviewDb,
   pr: VerifiedPR,
   userId: number,
 ): Promise<ReviewProgress> {
-  const groups = await db
-    .select({ id: reviewGroups.id })
-    .from(reviewGroups)
-    .where(currentGroupsWhere(pr));
-  const reviewed =
-    groups.length === 0
-      ? []
-      : await db
-          .select({ groupId: reviewGroupReviews.groupId })
-          .from(reviewGroupReviews)
-          .where(
-            and(
-              eq(reviewGroupReviews.userId, userId),
-              inArray(
-                reviewGroupReviews.groupId,
-                groups.map((g) => g.id),
+  // Three queries, so one snapshot: otherwise a regenerate or a push that
+  // commits between them mixes counts from different group sets.
+  return snapshot(db, async (q) => {
+    const groups = await q
+      .select({ id: reviewGroups.id })
+      .from(reviewGroups)
+      .where(currentGroupsWhere(pr));
+    const reviewed =
+      groups.length === 0
+        ? []
+        : await q
+            .select({ groupId: reviewGroupReviews.groupId })
+            .from(reviewGroupReviews)
+            .where(
+              and(
+                eq(reviewGroupReviews.userId, userId),
+                inArray(
+                  reviewGroupReviews.groupId,
+                  groups.map((g) => g.id),
+                ),
               ),
-            ),
-          );
-  const viewed = await db
-    .select({ path: reviewViewedFiles.path })
-    .from(reviewViewedFiles)
-    .where(
-      and(
-        eq(reviewViewedFiles.owner, pr.owner),
-        eq(reviewViewedFiles.repo, pr.repo),
-        eq(reviewViewedFiles.prNumber, pr.prNumber),
-        eq(reviewViewedFiles.headSha, pr.headSha),
-        eq(reviewViewedFiles.userId, userId),
-      ),
-    )
-    .orderBy(asc(reviewViewedFiles.path));
+            );
+    const viewed = await q
+      .select({ path: reviewViewedFiles.path })
+      .from(reviewViewedFiles)
+      .where(
+        and(
+          eq(reviewViewedFiles.owner, pr.owner),
+          eq(reviewViewedFiles.repo, pr.repo),
+          eq(reviewViewedFiles.prNumber, pr.prNumber),
+          eq(reviewViewedFiles.headSha, pr.headSha),
+          eq(reviewViewedFiles.userId, userId),
+        ),
+      )
+      .orderBy(asc(reviewViewedFiles.path));
 
-  const reviewedGroupIds = reviewed.map((r) => r.groupId).sort((a, b) => a - b);
-  return {
-    headSha: pr.headSha,
-    groupsTotal: groups.length,
-    groupsReviewed: reviewedGroupIds.length,
-    reviewedGroupIds,
-    viewedFiles: viewed.map((v) => v.path),
-  };
+    const reviewedGroupIds = reviewed
+      .map((r) => r.groupId)
+      .sort((a, b) => a - b);
+    return {
+      headSha: pr.headSha,
+      groupsTotal: groups.length,
+      groupsReviewed: reviewedGroupIds.length,
+      reviewedGroupIds,
+      viewedFiles: viewed.map((v) => v.path),
+    };
+  });
 }
