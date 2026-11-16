@@ -32,6 +32,9 @@ POST   /repos/:source/:owner/:repo/pr/:pr_number/groups            # create (aut
 PUT    /repos/:source/:owner/:repo/pr/:pr_number/groups            # replace all (e.g. accept AI groups)
 PATCH  /repos/:source/:owner/:repo/pr/:pr_number/groups/:group_id  # rename, move, set/add/remove files
 DELETE /repos/:source/:owner/:repo/pr/:pr_number/groups/:group_id
+PUT    /repos/:source/:owner/:repo/pr/:pr_number/groups/:group_id/reviewed  # review-progress.ts
+PUT    /repos/:source/:owner/:repo/pr/:pr_number/files/viewed
+GET    /repos/:source/:owner/:repo/pr/:pr_number/progress
 ```
 
 - **Checks**: check runs plus legacy commit statuses for the PR's head sha. Each check is normalized to `passed` (success, neutral), `failed`, `running` (anything not completed, or a pending status) or `skipped` (skipped, stale). Overall state is `failed` > `running` > `passed`, or `none` with no checks. Each list is capped at 1000 (`MAX_PAGES` × 100); when GitHub has more, the response sets `truncated: true` and a result that would be `passed` is `unknown` instead, because an unfetched check could be failing. Durations come from check-run start/finish and are null while running; commit statuses have no start time, so their duration is always null. The commit-status lookup is best-effort (tokens often lack the permission); a failing check-runs call fails the request. Both lists use `githubFetchAllCounted`: page 1 first, then the remaining pages (from `total_count`) in parallel, since the web app polls this while CI runs. The failing-conclusion set is shared with `pr-details.ts` (`FAILING_CONCLUSIONS`) so both endpoints classify a check the same way.
@@ -78,8 +81,16 @@ Guided review needs state GitHub doesn't hold: review groups, which groups a rev
 - **PUT**: `source: 'ai'` stores `createdBy: null` (AI groups have no human author, even when a person accepts them); `manual` stores the caller.
 - **Tests** use `@lythium/db/testing` (`createTestDb`, `resetReviewState`): PGlite with the real migrations, from the db package so there's one copy of drizzle-orm. `review-test-utils.ts` fakes the GitHub lookups.
 
+# Review progress (LYT-62)
+
+- **Routes** in `review-progress.ts`, built on `guidedRequest`/`stateError` from `review-groups.ts`. Marks are private to the caller and need only read access to the PR (no `editableBy`).
+- `PUT …/groups/:id/reviewed` `{ reviewed }` and `PUT …/files/viewed` `{ paths, viewed }` answer 204. The viewed route marks a batch in one transaction (`setFilesViewed`) and does **not** fetch the PR's files: ticking files is the hottest write, a stray path is harmless, and the per-user cap bounds it.
+- `GET …/progress` fetches the PR's files for the total and counts only viewed paths still in the PR, so the numbers match "3 of 7 groups reviewed" / "4 of 12 viewed".
+- **After a push**, progress resets (state is pinned to the head sha, see LYT-60): a file changed since it was viewed has to be viewed again. Files that didn't change are reset too; keeping them would need per-file blob shas.
+- Progress is keyed by GitHub user id, so it survives reloads and other browsers or tokens for the same user.
+
 Migrations: `pnpm --filter @lythium/db generate` after a schema change, `DB_URL=… pnpm --filter @lythium/db migrate` to apply.
 
 # Types contract
 
-`types.ts` (`GitHubRef`, `DiffFile`, `StackPR`, `StackDiff`, `StackItem`, `StackDiffResponse`, and the guided-review request/response types such as `ReviewGroup` and `ReviewGroupsResponse`) is imported by the web app as `@lythium/api/types` (see `package.json` `exports`). Any change to these shapes is a breaking change for `apps/web` — update both sides together.
+`types.ts` (`GitHubRef`, `DiffFile`, `StackPR`, `StackDiff`, `StackItem`, `StackDiffResponse`, and the guided-review request/response types such as `ReviewGroup`, `ReviewGroupsResponse` and `ReviewProgressResponse`) is imported by the web app as `@lythium/api/types` (see `package.json` `exports`). Any change to these shapes is a breaking change for `apps/web` — update both sides together.

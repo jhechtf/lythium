@@ -131,7 +131,7 @@ function requireEditable(
 // through `stateError` like the data layer's own checks.
 // ---------------------------------------------------------------------------
 
-const isObject = (v: unknown): v is Record<string, unknown> =>
+export const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 const optionalLine = (v: unknown, field: string) => {
@@ -240,7 +240,7 @@ const limitBody = (mb: number) =>
   });
 
 /** Middleware every write route runs before its handler reads the body. */
-const beforeBody = (mb: number) =>
+export const beforeBody = (mb: number) =>
   [requireReviewDb, checkRequest, limitBody(mb)] as const;
 
 /**
@@ -248,7 +248,7 @@ const beforeBody = (mb: number) =>
  * A body that streams past `bodyLimit` (no Content-Length) fails while being
  * read; that error is rethrown so `bodyLimit` answers 413.
  */
-const jsonBody = (c: Context) =>
+export const jsonBody = (c: Context) =>
   c.req.json().catch((err: unknown) => {
     if (err instanceof Error && err.name === 'BodyLimitError') throw err;
     return undefined;
