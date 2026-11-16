@@ -11,6 +11,7 @@ import {
   type ClusterFile,
   ClusterRefusedError,
   type DraftGroup,
+  escapeData,
 } from './clusterer.ts';
 import { groupByDirectory } from './directory.ts';
 
@@ -81,8 +82,9 @@ export function excerpt(patch: string | undefined): string | undefined {
     : out;
 }
 
+/** Characters a file takes in a prompt, after escaping (`<` → `&lt;`). */
 const sizeOf = (f: ClusterFile) =>
-  f.path.length + (f.excerpt?.length ?? 0) + 60;
+  escapeData(f.path).length + escapeData(f.excerpt ?? '').length + 60;
 
 function pack(files: ClusterFile[]): ClusterFile[][] {
   const chunks: ClusterFile[][] = [];
@@ -126,7 +128,21 @@ export function chunkFiles(prFiles: PRFile[]): ClusterFile[][] {
   return pack(files.map(({ excerpt: _, ...f }) => f));
 }
 
-/** Run `fn` over `items`, at most `limit` at a time, keeping order. */
+/**
+ * Model calls a generation over these files makes: one per chunk, plus a
+ * merge when there is more than one chunk. Rate limits charge this.
+ */
+export function modelCalls(prFiles: PRFile[]): number {
+  if (prFiles.length === 0) return 0;
+  const chunks = chunkFiles(prFiles).length;
+  return chunks > 1 ? chunks + 1 : chunks;
+}
+
+/**
+ * Run `fn` over `items`, at most `limit` at a time, keeping order. After one
+ * call fails, no worker starts another: each is a paid model call, and the
+ * caller has already fallen back.
+ */
 async function mapLimited<T, R>(
   items: T[],
   limit: number,
@@ -134,10 +150,16 @@ async function mapLimited<T, R>(
 ): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
+  let failed = false;
   const worker = async () => {
-    while (next < items.length) {
+    while (!failed && next < items.length) {
       const i = next++;
-      out[i] = await fn(items[i]);
+      try {
+        out[i] = await fn(items[i]);
+      } catch (err) {
+        failed = true;
+        throw err;
+      }
     }
   };
   await Promise.all(
@@ -148,7 +170,9 @@ async function mapLimited<T, R>(
 
 const clampConfidence = (n: unknown) =>
   typeof n === 'number' && Number.isFinite(n)
-    ? Math.min(100, Math.max(0, Math.round(n <= 1 && n > 0 ? n * 100 : n)))
+    ? // 0–100 is the declared scale; a value strictly between 0 and 1 is
+      // taken as a fraction. 1 stays 1%.
+      Math.min(100, Math.max(0, Math.round(n < 1 && n > 0 ? n * 100 : n)))
     : 0;
 
 const cleanName = (s: string) =>
@@ -261,7 +285,8 @@ async function clusterWithModel(
   return out;
 }
 
-function byDirectory(
+/** Directory grouping, with the same label caps as the model path. */
+export function byDirectory(
   input: GenerateInput,
   fallbackReason: GenerateFallbackReason | null,
 ): GenerateResult {
@@ -269,8 +294,8 @@ function byDirectory(
     input.files.map((f) => f.path),
     GRANULARITY[input.granularity],
   ).map((g) => ({
-    name: g.name,
-    description: g.description,
+    name: cleanName(g.name),
+    description: cleanDescription(g.description),
     files: g.paths,
     confidence: g.confidence,
   }));

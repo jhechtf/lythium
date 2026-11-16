@@ -6,6 +6,7 @@ import {
   ClusterRefusedError,
   type ClusterRequest,
   type DraftGroup,
+  escapeData,
   type MergedGroup,
   type MergeRequest,
   type ModelStrategy,
@@ -61,10 +62,6 @@ const MergeSchema = z.object({
     }),
   ),
 });
-
-/** Keep data from closing our tags or attributes. */
-const escapeData = (s: string) =>
-  s.replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
 function prBlock(pr: ClusterRequest['pr']) {
   return `<pr>\nTitle: ${escapeData(pr.title)}\n${pr.body ? `Description:\n${escapeData(pr.body.slice(0, 4000))}\n` : ''}</pr>`;

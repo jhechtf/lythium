@@ -1,3 +1,4 @@
+import { REVIEW_LIMITS } from '@lythium/db';
 import { describe, expect, it, vi } from 'vitest';
 import type { PRFile } from '../pr-files.ts';
 import { AnthropicClusterer } from './anthropic.ts';
@@ -5,14 +6,17 @@ import {
   type Clusterer,
   ClusterRefusedError,
   type ClusterRequest,
+  escapeData,
   type MergeRequest,
 } from './clusterer.ts';
 import { groupByDirectory } from './directory.ts';
 import {
+  byDirectory,
   CLUSTER_LIMITS,
   chunkFiles,
   excerpt,
   generateGroups,
+  modelCalls,
   normalize,
 } from './generate.ts';
 import { SlidingWindowLimiter, TtlCache } from './limits.ts';
@@ -106,6 +110,22 @@ describe('chunkFiles', () => {
     expect(chunks.length).toBeLessThanOrEqual(CLUSTER_LIMITS.maxChunks);
     expect(chunks.flat().every((f) => f.excerpt === undefined)).toBe(true);
   });
+
+  it('budgets chunks by escaped size', () => {
+    // `<` becomes `&lt;` in the prompt: 4x the raw length.
+    const lt = '<'.repeat(CLUSTER_LIMITS.excerptChars);
+    const files = Array.from({ length: 38 }, (_, i) => file(`f${i}.ts`, lt));
+    const chunks = chunkFiles(files);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      const sent = chunk.reduce(
+        (n, f) =>
+          n + escapeData(f.path).length + escapeData(f.excerpt ?? '').length,
+        0,
+      );
+      expect(sent).toBeLessThanOrEqual(CLUSTER_LIMITS.chunkChars);
+    }
+  });
 });
 
 describe('normalize', () => {
@@ -139,6 +159,7 @@ describe('normalize', () => {
           confidence: 0.9,
         },
         { name: 'Dup', description: '', fileIds: [1, 2], confidence: 250 },
+        { name: 'One', description: 'y', fileIds: [3], confidence: 1 },
         { name: 'Empty', description: 'gone', fileIds: [], confidence: 50 },
       ],
       FILES,
@@ -156,10 +177,17 @@ describe('normalize', () => {
         files: ['db/schema.ts'],
         confidence: 100,
       },
+      // 1 is on the 0–100 scale, not a fraction.
+      {
+        name: 'One',
+        description: 'y',
+        files: ['web/src/c.svelte'],
+        confidence: 1,
+      },
       {
         name: 'Unsorted files',
         description: 'Files the grouping did not place',
-        files: ['web/src/c.svelte', 'README.md'],
+        files: ['README.md'],
         confidence: 0,
       },
     ]);
@@ -331,6 +359,45 @@ describe('generateGroups', () => {
     );
   });
 
+  it('starts no more chunk calls after one fails', async () => {
+    const files = Array.from({ length: 2500 }, (_, i) => file(`a/f${i}.ts`));
+    let started = 0;
+    const { clusterer } = fakeClusterer({
+      // The first call fails; the others are slower and succeed.
+      async cluster() {
+        if (++started === 1) throw new Error('boom');
+        await new Promise((r) => setTimeout(r, 5));
+        return [];
+      },
+    });
+    const out = await generateGroups({ ...input, files }, clusterer, () => {});
+    expect(out.fallbackReason).toBe('model_error');
+    // Let the in-flight calls finish; without the stop they'd take more chunks.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(chunkFiles(files).length).toBeGreaterThan(
+      CLUSTER_LIMITS.concurrency,
+    );
+    expect(started).toBeLessThanOrEqual(CLUSTER_LIMITS.concurrency);
+  });
+
+  it('caps directory group names like model ones', () => {
+    const dir = 'd'.repeat(300);
+    const out = byDirectory(
+      { ...input, strategy: 'directory', files: [file(`${dir}/x/a.ts`)] },
+      null,
+    );
+    for (const g of out.groups) {
+      expect(g.name.length).toBeLessThanOrEqual(REVIEW_LIMITS.nameLength);
+    }
+  });
+
+  it('counts model calls: one per chunk, plus a merge', () => {
+    expect(modelCalls([])).toBe(0);
+    expect(modelCalls(FILES)).toBe(1);
+    const many = Array.from({ length: 600 }, (_, i) => file(`f${i}.ts`));
+    expect(modelCalls(many)).toBe(4);
+  });
+
   it('never calls the model for the directory strategy or an empty PR', async () => {
     const { clusterer, calls } = fakeClusterer();
     expect(
@@ -456,6 +523,22 @@ describe('limits', () => {
     expect(l.take('b').ok).toBe(true);
     now = 1001;
     expect(l.take('a').ok).toBe(true);
+  });
+
+  it('charges a cost, and checks without recording', () => {
+    let now = 0;
+    const l = new SlidingWindowLimiter(5, 1000, () => now);
+    expect(l.check('a', 5).ok).toBe(true);
+    expect(l.take('a', 3).ok).toBe(true);
+    now = 500;
+    expect(l.take('a', 1).ok).toBe(true);
+    // 4 used; 2 more need the first 3 (at t=0) to expire.
+    expect(l.check('a', 2)).toEqual({ ok: false, retryAfterSec: 1 });
+    expect(l.take('a', 1).ok).toBe(true);
+    now = 1001;
+    // The two hits at t=500 are still live.
+    expect(l.take('a', 4).ok).toBe(false);
+    expect(l.take('a', 3).ok).toBe(true);
   });
 
   it('expires and evicts cache entries', () => {

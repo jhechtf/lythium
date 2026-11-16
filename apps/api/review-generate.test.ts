@@ -14,8 +14,10 @@ import type { Clusterer } from './clustering/clusterer.ts';
 import { clearViewerCache, setReviewDb } from './review-context.ts';
 import {
   GENERATE_RATE,
+  GLOBAL_MODEL_RATE,
   getClusterer,
   resetGenerateState,
+  resetUserLimits,
   setClusterer,
 } from './review-generate.ts';
 import { as, fakeGithub, NEW_SHA, PR_URL, SHA } from './review-test-utils.ts';
@@ -177,6 +179,62 @@ describe('POST …/groups/generate', () => {
     ).json()) as GenerateGroupsResponse;
     expect(second).toMatchObject({ generatedBy: 'model', cached: false });
     expect(cluster).toHaveBeenCalledTimes(2);
+  });
+
+  it('an older fallback does not evict a newer preview', async () => {
+    fakeGithub();
+    let failFirst!: (e: Error) => void;
+    const cluster = vi
+      .fn<Clusterer['cluster']>()
+      // The first generation hangs, then fails after the regenerate succeeds.
+      .mockImplementationOnce(
+        () => new Promise((_, reject) => (failFirst = reject)),
+      )
+      .mockResolvedValue([]);
+    setClusterer({ name: 'm', cluster, merge: vi.fn() });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const first = generate({ strategy: 'feature' });
+    await vi.waitFor(() => expect(cluster).toHaveBeenCalledTimes(1));
+    const fresh = (await (
+      await generate({ strategy: 'feature', regenerate: true })
+    ).json()) as GenerateGroupsResponse;
+    expect(fresh.generatedBy).toBe('model');
+    failFirst(new Error('overloaded'));
+    expect(
+      ((await (await first).json()) as GenerateGroupsResponse).fallbackReason,
+    ).toBe('model_error');
+
+    const again = (await (
+      await generate({ strategy: 'feature' })
+    ).json()) as GenerateGroupsResponse;
+    expect(again).toMatchObject({ generatedBy: 'model', cached: true });
+    expect(cluster).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to directories once the instance budget is spent', async () => {
+    fakeGithub({ pushers: ['reviewer'] });
+    const cluster = modelClusterer();
+    // Spread across users so no one hits their own limit first.
+    const users = ['author', 'reviewer'];
+    for (let i = 0; i < GLOBAL_MODEL_RATE.limit; i++) {
+      const res = await app.request(
+        GENERATE,
+        as(users[i % 2], 'POST', { strategy: 'feature', regenerate: true }),
+      );
+      if (res.status === 429) {
+        resetUserLimits();
+        i--;
+      }
+    }
+    const out = (await (
+      await generate({ strategy: 'feature', regenerate: true })
+    ).json()) as GenerateGroupsResponse;
+    expect(out).toMatchObject({
+      generatedBy: 'directory',
+      fallbackReason: 'rate_limited',
+    });
+    expect(cluster).toHaveBeenCalledTimes(GLOBAL_MODEL_RATE.limit);
   });
 
   it('only lets the author or a pusher generate', async () => {

@@ -2,10 +2,15 @@ import { ReviewStateError } from '@lythium/db';
 import { Hono } from 'hono';
 import { AnthropicClusterer } from './clustering/anthropic.ts';
 import type { Clusterer } from './clustering/clusterer.ts';
-import { type GenerateResult, generateGroups } from './clustering/generate.ts';
-import { SlidingWindowLimiter, TtlCache } from './clustering/limits.ts';
-import { requireReviewDb } from './review-context.ts';
 import {
+  byDirectory,
+  type GenerateResult,
+  generateGroups,
+  modelCalls,
+} from './clustering/generate.ts';
+import { SlidingWindowLimiter, TtlCache } from './clustering/limits.ts';
+import {
+  beforeBody,
   guidedRequest,
   isObject,
   jsonBody,
@@ -61,11 +66,27 @@ export function setClusterer(c: Clusterer | null | undefined) {
 }
 
 // ---------------------------------------------------------------------------
-// Limits: model generations per user, and previews cached by head sha.
+// Limits: model calls per user and per instance, and previews cached by
+// head sha. A generation is charged one per model call it makes (a large PR
+// is several chunk calls plus a merge), so a big PR costs more of the budget.
 // ---------------------------------------------------------------------------
 
-/** Model generations per GitHub user per window. Cache hits don't count. */
-export const GENERATE_RATE = { limit: 10, windowMs: 10 * 60_000 };
+/**
+ * Model calls per GitHub user per window. Cache hits don't count. Must be at
+ * least the most one generation can make (12 chunks + 1 merge).
+ */
+export const GENERATE_RATE = { limit: 40, windowMs: 10 * 60_000 };
+
+/**
+ * Model calls per API instance per window, across all users. A user limit
+ * alone doesn't bound spend: anyone can open PRs in their own repo, and
+ * accounts are free. `CLUSTER_MAX_CALLS_PER_HOUR` overrides the default.
+ * When it's used up, generation falls back to directory grouping.
+ */
+export const GLOBAL_MODEL_RATE = {
+  limit: Number(process.env.CLUSTER_MAX_CALLS_PER_HOUR) || 300,
+  windowMs: 60 * 60_000,
+};
 /** Cached previews: per PR head sha + settings. */
 export const PREVIEW_CACHE = { max: 500, ttlMs: 60 * 60_000 };
 
@@ -73,15 +94,25 @@ const limiter = new SlidingWindowLimiter(
   GENERATE_RATE.limit,
   GENERATE_RATE.windowMs,
 );
+const globalLimiter = new SlidingWindowLimiter(
+  GLOBAL_MODEL_RATE.limit,
+  GLOBAL_MODEL_RATE.windowMs,
+);
 // Promises, so two identical requests in flight share one model call.
 const previews = new TtlCache<Promise<GenerateResult>>(
   PREVIEW_CACHE.max,
   PREVIEW_CACHE.ttlMs,
 );
 
+/** Tests: forget per-user rate-limit hits only. */
+export function resetUserLimits() {
+  limiter.clear();
+}
+
 /** Tests: forget rate-limit hits and cached previews. */
 export function resetGenerateState() {
   limiter.clear();
+  globalLimiter.clear();
   previews.clear();
 }
 
@@ -121,7 +152,7 @@ function parseGenerate(v: unknown) {
 
 export const reviewGenerateRoutes = new Hono<ReviewEnv>().post(
   '/groups/generate',
-  requireReviewDb,
+  ...beforeBody(1),
   async (c) => {
     try {
       const { strategy, granularity, regenerate } = parseGenerate(
@@ -132,15 +163,26 @@ export const reviewGenerateRoutes = new Hono<ReviewEnv>().post(
       const pr = requireEditable(c, req);
       if (pr instanceof Response) return pr;
 
-      const model = strategy === 'directory' ? null : getClusterer();
+      let model = strategy === 'directory' ? null : getClusterer();
       const key = `${pr.owner}/${pr.repo}#${pr.prNumber}@${pr.headSha}:${strategy}:${granularity}`;
       let cached = false;
       let pending = regenerate || !model ? undefined : previews.get(key);
       if (pending) {
         cached = true;
       } else {
+        const input = {
+          strategy,
+          granularity,
+          pr: { title: req.resolved.title, body: req.resolved.body },
+          files: req.prFiles,
+        };
+        let overBudget = false;
         if (model) {
-          const allowed = limiter.take(String(req.viewer.id));
+          const user = String(req.viewer.id);
+          const cost = modelCalls(req.prFiles);
+          // Check the user's own limit first, so a 429 doesn't spend the
+          // instance budget.
+          const allowed = limiter.check(user, cost);
           if (!allowed.ok) {
             c.header('Retry-After', String(allowed.retryAfterSec));
             return c.json(
@@ -151,25 +193,28 @@ export const reviewGenerateRoutes = new Hono<ReviewEnv>().post(
               429,
             );
           }
+          if (globalLimiter.take('*', cost).ok) {
+            limiter.take(user, cost);
+          } else {
+            overBudget = true;
+            model = null;
+          }
         }
-        pending = generateGroups(
-          {
-            strategy,
-            granularity,
-            pr: { title: req.resolved.title, body: req.resolved.body },
-            files: req.prFiles,
-          },
-          model,
-        );
+        const generating = overBudget
+          ? Promise.resolve(byDirectory(input, 'rate_limited'))
+          : generateGroups(input, model);
+        pending = generating;
         if (model) {
-          previews.set(key, pending);
-          // Only keep model results: a fallback should retry the model.
-          pending.then(
-            (r) => {
-              if (r.generatedBy !== 'model') previews.delete(key);
-            },
-            () => previews.delete(key),
-          );
+          previews.set(key, generating);
+          // Only keep model results: a fallback should retry the model. A
+          // regenerate may have replaced this entry by the time it settles;
+          // only evict it if it's still ours.
+          const evict = () => {
+            if (previews.peek(key) === generating) previews.delete(key);
+          };
+          generating.then((r) => {
+            if (r.generatedBy !== 'model') evict();
+          }, evict);
         }
       }
       const result = await pending;

@@ -8,6 +8,13 @@
 
 export type ModelStrategy = 'feature' | 'layer';
 
+/**
+ * Keep data from closing a prompt's tags or attributes. Shared so chunk
+ * sizing in `generate.ts` measures what is actually sent.
+ */
+export const escapeData = (s: string) =>
+  s.replace(/</g, '&lt;').replace(/"/g, '&quot;');
+
 export interface ClusterFile {
   id: number;
   path: string;

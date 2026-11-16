@@ -281,7 +281,9 @@ export type ClusterGranularity = 'coarse' | 'balanced' | 'fine';
 export type GenerateFallbackReason =
   | 'not_configured'
   | 'refused'
-  | 'model_error';
+  | 'model_error'
+  /** The instance's model-call budget is used up for now. */
+  | 'rate_limited';
 
 /** `POST …/groups/generate`. */
 export interface GenerateGroupsRequest {

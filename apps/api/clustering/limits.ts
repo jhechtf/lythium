@@ -16,21 +16,38 @@ export class SlidingWindowLimiter {
     private now: () => number = Date.now,
   ) {}
 
-  /** Record a hit, or say how many seconds until one is allowed. */
-  take(key: string): { ok: true } | { ok: false; retryAfterSec: number } {
+  /**
+   * Whether `cost` hits fit now, or how many seconds until they do. Doesn't
+   * record anything. A cost above the limit is charged as the limit.
+   */
+  check(
+    key: string,
+    cost = 1,
+  ): { ok: true } | { ok: false; retryAfterSec: number } {
     const now = this.now();
-    const recent = (this.hits.get(key) ?? []).filter(
-      (t) => t > now - this.windowMs,
+    const recent = this.recent(key, now);
+    const n = Math.min(Math.max(cost, 1), this.limit);
+    if (recent.length + n <= this.limit) return { ok: true };
+    // Enough of the oldest hits have to expire to leave room for n.
+    const mustExpire = recent[recent.length + n - this.limit - 1];
+    const retryAfterSec = Math.max(
+      1,
+      Math.ceil((mustExpire + this.windowMs - now) / 1000),
     );
-    if (recent.length >= this.limit) {
-      this.hits.set(key, recent);
-      const retryAfterSec = Math.max(
-        1,
-        Math.ceil((recent[0] + this.windowMs - now) / 1000),
-      );
-      return { ok: false, retryAfterSec };
-    }
-    recent.push(now);
+    return { ok: false, retryAfterSec };
+  }
+
+  /** Record `cost` hits, or say how many seconds until they're allowed. */
+  take(
+    key: string,
+    cost = 1,
+  ): { ok: true } | { ok: false; retryAfterSec: number } {
+    const allowed = this.check(key, cost);
+    if (!allowed.ok) return allowed;
+    const now = this.now();
+    const recent = this.recent(key, now);
+    const n = Math.min(Math.max(cost, 1), this.limit);
+    for (let i = 0; i < n; i++) recent.push(now);
     this.hits.set(key, recent);
     // Keep the map from growing without bound: drop keys with no recent hits.
     if (this.hits.size > 10_000) {
@@ -39,6 +56,14 @@ export class SlidingWindowLimiter {
       }
     }
     return { ok: true };
+  }
+
+  private recent(key: string, now: number) {
+    const recent = (this.hits.get(key) ?? []).filter(
+      (t) => t > now - this.windowMs,
+    );
+    this.hits.set(key, recent);
+    return recent;
   }
 
   clear() {
@@ -72,6 +97,12 @@ export class TtlCache<V> {
       if (oldest !== undefined) this.entries.delete(oldest);
     }
     this.entries.set(key, { value, expires: this.now() + this.ttlMs });
+  }
+
+  /** The live value without refreshing its LRU position. */
+  peek(key: string): V | undefined {
+    const hit = this.entries.get(key);
+    return hit && hit.expires > this.now() ? hit.value : undefined;
   }
 
   delete(key: string) {
