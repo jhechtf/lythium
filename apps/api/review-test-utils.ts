@@ -70,6 +70,7 @@ export function fakeGithub(overrides: Partial<FakeGithub> = {}) {
       return json({
         head: { sha: gh.headSha },
         user: { id: gh.authorId },
+        changed_files: gh.files.length,
         base: {
           repo: { permissions: { push: gh.pushers.includes(token) } },
         },

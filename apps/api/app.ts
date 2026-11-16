@@ -14,7 +14,7 @@ import {
   type GithubReview,
 } from './pr-details.ts';
 import { reviewGroupRoutes } from './review-groups.ts';
-import { repoParams, unsupportedSource } from './route-params.ts';
+import { bearerToken, repoParams, unsupportedSource } from './route-params.ts';
 import type {
   DiffFile,
   PRChecksResponse,
@@ -145,11 +145,9 @@ export const app = new Hono()
   .get('/repos/:source/:owner/:repo/pr/:pr_number/diff', async (c) => {
     const badSource = unsupportedSource(c, c.req.param('source'));
     if (badSource) return badSource;
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
-      return c.json({ error: 'Missing or invalid Authorization header' }, 401);
-    }
-    const token = authHeader.slice(7);
+    const auth = bearerToken(c);
+    if (auth.error) return auth.error;
+    const { token } = auth;
 
     const params = repoParams(c);
     if ('error' in params) return params.error;
@@ -227,11 +225,9 @@ export const app = new Hono()
   .get('/repos/:source/:owner/:repo/pr/:pr_number', async (c) => {
     const badSource = unsupportedSource(c, c.req.param('source'));
     if (badSource) return badSource;
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
-      return c.json({ error: 'Missing or invalid Authorization header' }, 401);
-    }
-    const token = authHeader.slice(7);
+    const auth = bearerToken(c);
+    if (auth.error) return auth.error;
+    const { token } = auth;
     const params = repoParams(c);
     if ('error' in params) return params.error;
     const { owner, pr_number, base } = params;
@@ -298,11 +294,9 @@ export const app = new Hono()
   .get('/repos/:source/:owner/:repo/pr/:pr_number/checks', async (c) => {
     const badSource = unsupportedSource(c, c.req.param('source'));
     if (badSource) return badSource;
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
-      return c.json({ error: 'Missing or invalid Authorization header' }, 401);
-    }
-    const token = authHeader.slice(7);
+    const auth = bearerToken(c);
+    if (auth.error) return auth.error;
+    const { token } = auth;
     const params = repoParams(c);
     if ('error' in params) return params.error;
     const { pr_number, base } = params;

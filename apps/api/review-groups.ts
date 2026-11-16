@@ -12,6 +12,8 @@ import {
   updateGroup,
 } from '@lythium/db';
 import { type Context, Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
+import { createMiddleware } from 'hono/factory';
 import { upstreamError } from './github.ts';
 import {
   checkFilesInPR,
@@ -70,10 +72,19 @@ export async function guidedRequest(
   const { owner, repo, pr_number } = params;
   const n = Number(pr_number);
 
+  const resolving = resolvePR(auth.token, owner, repo, n);
   const [resolved, viewer, files] = await Promise.all([
-    resolvePR(auth.token, owner, repo, n),
+    resolving,
     fetchViewer(auth.token),
-    opts.files ? fetchPRFiles(auth.token, owner, repo, n) : null,
+    opts.files
+      ? fetchPRFiles(
+          auth.token,
+          owner,
+          repo,
+          n,
+          resolving.then((r) => (r.ok ? r.changedFiles : null)),
+        )
+      : null,
   ]);
   if (!resolved.ok) return { error: upstreamError(c, resolved, pr_number) };
   if (!viewer.ok) return { error: upstreamError(c, viewer, pr_number) };
@@ -201,8 +212,47 @@ function parseReplace(v: unknown): {
   return { groups: v.groups.map(parseNewGroup), source };
 }
 
-/** The JSON body, or undefined when it isn't JSON (parsers then answer 400). */
-const jsonBody = (c: Context) => c.req.json().catch(() => undefined);
+/**
+ * Cheap checks for write routes, before the body is read: source, token and
+ * params. A caller without a token can't make the API buffer a body.
+ * `guidedRequest` repeats them later; they're pure and cost nothing.
+ */
+const checkRequest = createMiddleware(async (c, next) => {
+  const badSource = unsupportedSource(c, c.req.param('source') ?? '');
+  if (badSource) return badSource;
+  const auth = bearerToken(c);
+  if (auth.error) return auth.error;
+  const params = repoParams(c);
+  if (params.error) return params.error;
+  await next();
+});
+
+/**
+ * Cap a write's body before it is buffered and parsed, sized to what the
+ * input caps allow: up to 1 kB per path, plus names and descriptions.
+ * `PUT` (10k entries) and `PATCH` (files + addFiles + removeFiles, 3000 each)
+ * need ~10 MB; `POST` (one group, 3000 files) needs ~3 MB.
+ */
+const limitBody = (mb: number) =>
+  bodyLimit({
+    maxSize: mb * 1024 * 1024,
+    onError: (c) => c.json({ error: 'Request body too large' }, 413),
+  });
+
+/** Middleware every write route runs before its handler reads the body. */
+const beforeBody = (mb: number) =>
+  [requireReviewDb, checkRequest, limitBody(mb)] as const;
+
+/**
+ * The JSON body, or undefined when it isn't JSON (parsers then answer 400).
+ * A body that streams past `bodyLimit` (no Content-Length) fails while being
+ * read; that error is rethrown so `bodyLimit` answers 413.
+ */
+const jsonBody = (c: Context) =>
+  c.req.json().catch((err: unknown) => {
+    if (err instanceof Error && err.name === 'BodyLimitError') throw err;
+    return undefined;
+  });
 
 function groupId(c: Context): number | null {
   const id = c.req.param('group_id') ?? '';
@@ -243,7 +293,7 @@ export const reviewGroupRoutes = new Hono<ReviewEnv>()
       return stateError(c, err);
     }
   })
-  .post('/groups', requireReviewDb, async (c) => {
+  .post('/groups', ...beforeBody(4), async (c) => {
     try {
       const group = parseNewGroup(await jsonBody(c));
       const req = await guidedRequest(c, { files: group.files.length > 0 });
@@ -258,7 +308,7 @@ export const reviewGroupRoutes = new Hono<ReviewEnv>()
       return stateError(c, err);
     }
   })
-  .put('/groups', requireReviewDb, async (c) => {
+  .put('/groups', ...beforeBody(12), async (c) => {
     try {
       const { groups, source } = parseReplace(await jsonBody(c));
       const req = await guidedRequest(c, { files: true });
@@ -284,7 +334,7 @@ export const reviewGroupRoutes = new Hono<ReviewEnv>()
       return stateError(c, err);
     }
   })
-  .patch('/groups/:group_id', requireReviewDb, async (c) => {
+  .patch('/groups/:group_id', ...beforeBody(12), async (c) => {
     const id = groupId(c);
     if (id === null) return groupNotFound(c, c.req.param('group_id'));
     try {

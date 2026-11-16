@@ -127,10 +127,13 @@ export interface ResolvedPR {
   authorId: number | null;
   /** The caller has push (or maintain/admin) access to the base repo. */
   canPush: boolean;
+  /** GitHub's `changed_files` count, used to page the files list in parallel. */
+  changedFiles: number | null;
 }
 
 interface GithubPRAccess {
   head?: { sha?: unknown };
+  changed_files?: unknown;
   user?: { id?: unknown } | null;
   base?: {
     repo?: {
@@ -173,6 +176,8 @@ export async function resolvePR(
     authorId: typeof authorId === 'number' ? authorId : null,
     canPush:
       perms?.push === true || perms?.maintain === true || perms?.admin === true,
+    changedFiles:
+      typeof data?.changed_files === 'number' ? data.changed_files : null,
   };
 }
 

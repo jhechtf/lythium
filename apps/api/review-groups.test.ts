@@ -251,13 +251,42 @@ describe('review groups', () => {
     expect((await app.request(GROUPS, as('author'))).status).toBe(503);
   });
 
-  it('pages through large PRs', async () => {
-    fakeGithub({
+  it('pages through large PRs, fetching pages after the first in parallel', async () => {
+    const { fetchMock } = fakeGithub({
       files: Array.from({ length: 250 }, (_, i) => ({
         filename: `f${i}.ts`,
         status: 'modified',
       })),
     });
-    expect((await list()).totalFiles).toBe(250);
+    const out = await list();
+    expect(out.totalFiles).toBe(250);
+    expect(out.unassigned[249]).toBe('f249.ts');
+    const pages = fetchMock.mock.calls
+      .map(([url]) => new URL(url as string))
+      .filter((u) => u.pathname.endsWith('/files'))
+      .map((u) => u.searchParams.get('page'));
+    // changed_files says 3 pages, so there's no probe for an empty page 4.
+    expect(pages.sort()).toEqual(['1', '2', '3']);
+  });
+
+  it('rejects an oversized body with 413, and a missing token before reading it', async () => {
+    fakeGithub();
+    const huge = JSON.stringify({
+      name: 'x',
+      description: 'x'.repeat(5 << 20),
+    });
+    const post = (headers: Record<string, string>) =>
+      app.request(GROUPS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: huge,
+      });
+    const auth = { Authorization: 'Bearer author' };
+    // Streamed (no Content-Length), and declared up front.
+    expect((await post(auth)).status).toBe(413);
+    expect(
+      (await post({ ...auth, 'Content-Length': String(huge.length) })).status,
+    ).toBe(413);
+    expect((await post({})).status).toBe(401);
   });
 });
