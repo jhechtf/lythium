@@ -448,6 +448,25 @@ describe('review state', () => {
       expect(await listGroups(db, PR)).toEqual([]);
     });
 
+    // A/T1 recorded; a request reads B/T2 and stalls; a force-push back to A
+    // is read at T3 by an empty viewed-files batch. That batch must still
+    // record T3, so the stalled B/T2 write can't take over and wipe A.
+    it('records the head even for an empty viewed-files batch', async () => {
+      await createGroup(db, PR, { name: 'keep', files: [] }, ALICE);
+      const T3 = new Date('2026-11-15T10:02:00Z');
+      await setFilesViewed(
+        db,
+        verifiedPR({ ...PR, observedAt: T3 }),
+        ALICE,
+        [],
+        true,
+      );
+      await expect(
+        createGroup(db, PR_PUSHED, { name: 'late', files: [] }, BOB),
+      ).rejects.toBeInstanceOf(StaleHeadError);
+      expect((await listGroups(db, PR)).map((g) => g.name)).toEqual(['keep']);
+    });
+
     it('lets an older observation of the same sha through', async () => {
       await createGroup(db, PR_PUSHED, { name: 'a', files: [] }, ALICE);
       const sameShaEarlier = editablePR(

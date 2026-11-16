@@ -797,10 +797,12 @@ export async function setFilesViewed(
   }
   for (const path of paths) checkPath(path);
   const unique = [...new Set(paths)];
-  if (unique.length === 0) return;
 
   await db.transaction(async (tx) => {
+    // Even an empty batch records the head it observed, so an older
+    // observation that arrives later is rejected instead of winning.
     await beginWrite(tx, pr);
+    if (unique.length === 0) return;
     const userAtHead = and(
       eq(reviewViewedFiles.owner, pr.owner),
       eq(reviewViewedFiles.repo, pr.repo),
