@@ -13,6 +13,7 @@ import {
   type GithubPRFull,
   type GithubReview,
 } from './pr-details.ts';
+import { reviewGenerateRoutes } from './review-generate.ts';
 import { reviewGroupRoutes } from './review-groups.ts';
 import { reviewProgressRoutes } from './review-progress.ts';
 import { bearerToken, repoParams, unsupportedSource } from './route-params.ts';
@@ -342,6 +343,7 @@ export const app = new Hono()
       }),
     );
   })
+  .route('/repos/:source/:owner/:repo/pr/:pr_number', reviewGenerateRoutes)
   .route('/repos/:source/:owner/:repo/pr/:pr_number', reviewGroupRoutes)
   .route('/repos/:source/:owner/:repo/pr/:pr_number', reviewProgressRoutes);
 

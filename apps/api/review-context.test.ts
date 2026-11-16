@@ -167,6 +167,8 @@ describe('resolvePR', () => {
       authorId: null,
       canPush: false,
       changedFiles: 3,
+      title: '',
+      body: null,
     });
     // The observation is stamped when GitHub answers, for ordering writes.
     const observedAt = (result as { pr: { observedAt: Date } }).pr.observedAt;

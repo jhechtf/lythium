@@ -132,7 +132,7 @@ export function stateError(c: Context, err: unknown): Response {
 }
 
 /** The PR as editable by this caller, or a 403 response. */
-function requireEditable(
+export function requireEditable(
   c: Context,
   req: GuidedRequest,
 ): EditablePR | Response {

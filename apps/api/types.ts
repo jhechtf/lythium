@@ -262,3 +262,62 @@ export interface SetFilesViewedRequest {
   paths: string[];
   viewed: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Guided review: AI clustering (LYT-63). A preview; nothing is saved until
+// the client sends the groups to `PUT …/groups` with `source: 'ai'`.
+// ---------------------------------------------------------------------------
+
+/**
+ * `feature`: by user-facing change, across layers. `layer`: data → API → UI
+ * → tests → docs/config. `directory`: by path, no model call.
+ */
+export type ClusterStrategy = 'feature' | 'layer' | 'directory';
+
+/** Target group count: coarse 2–4, balanced 4–6, fine 6–10 (a hint to the model). */
+export type ClusterGranularity = 'coarse' | 'balanced' | 'fine';
+
+/** Why the result came from directory grouping instead of the model. */
+export type GenerateFallbackReason =
+  | 'not_configured'
+  | 'refused'
+  | 'model_error';
+
+/** `POST …/groups/generate`. */
+export interface GenerateGroupsRequest {
+  strategy: ClusterStrategy;
+  /** Defaults to `balanced`. */
+  granularity?: ClusterGranularity;
+  /** Skip the cached preview for these settings and generate a new one. */
+  regenerate?: boolean;
+}
+
+export interface GeneratedGroup {
+  name: string;
+  description: string | null;
+  /** Whole files; together the groups cover every changed file exactly once. */
+  files: string[];
+  /**
+   * 0–100. From the model: its estimate that every file belongs under the
+   * group's name. From directory grouping: 100 for a single directory, and
+   * for the "Other changes" catch-all the share of its files in its most
+   * common top-level directory. "Unsorted files" (files the model didn't
+   * place) is 0.
+   */
+  confidence: number;
+}
+
+export interface GenerateGroupsResponse {
+  /** The preview is for this head sha; accept it before the next push. */
+  headSha: string;
+  strategy: ClusterStrategy;
+  granularity: ClusterGranularity;
+  groups: GeneratedGroup[];
+  generatedBy: 'model' | 'directory';
+  /** Model id when `generatedBy` is `model`. */
+  model: string | null;
+  /** Set when a `feature`/`layer` request fell back to directory grouping. */
+  fallbackReason: GenerateFallbackReason | null;
+  /** True when this is a stored preview for the same head sha and settings. */
+  cached: boolean;
+}

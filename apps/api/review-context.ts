@@ -129,9 +129,14 @@ export interface ResolvedPR {
   canPush: boolean;
   /** GitHub's `changed_files` count, used to page the files list in parallel. */
   changedFiles: number | null;
+  /** PR title and description, for AI clustering's context. */
+  title: string;
+  body: string | null;
 }
 
 interface GithubPRAccess {
+  title?: unknown;
+  body?: unknown;
   head?: { sha?: unknown };
   changed_files?: unknown;
   user?: { id?: unknown } | null;
@@ -178,6 +183,8 @@ export async function resolvePR(
       perms?.push === true || perms?.maintain === true || perms?.admin === true,
     changedFiles:
       typeof data?.changed_files === 'number' ? data.changed_files : null,
+    title: typeof data?.title === 'string' ? data.title : '',
+    body: typeof data?.body === 'string' ? data.body : null,
   };
 }
 
