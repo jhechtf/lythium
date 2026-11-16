@@ -155,3 +155,75 @@ export interface PRDetailsResponse {
   parent_pr: number | null;
   merge: MergeStatus;
 }
+
+// ---------------------------------------------------------------------------
+// Guided review: groups (LYT-61)
+// ---------------------------------------------------------------------------
+
+/** `manual` (made by a person) or `ai` (accepted from guided clustering). */
+export type ReviewGroupSource = 'manual' | 'ai';
+
+/** A file in a group. A line range refers to the new file; null for the whole file. */
+export interface ReviewGroupFile {
+  path: string;
+  startLine: number | null;
+  endLine: number | null;
+}
+
+export interface ReviewGroup {
+  id: number;
+  name: string;
+  description: string | null;
+  /** 0-based display order. */
+  position: number;
+  source: ReviewGroupSource;
+  /** GitHub user id of whoever made it; null for AI-generated groups. */
+  createdBy: number | null;
+  files: ReviewGroupFile[];
+}
+
+/** `GET …/groups` and `PUT …/groups`. */
+export interface ReviewGroupsResponse {
+  /** Groups belong to this head sha; a push starts over with none. */
+  headSha: string;
+  groups: ReviewGroup[];
+  /** Changed files no group mentions (whole or as a line range), in PR order. */
+  unassigned: string[];
+  /** Number of files the PR changes. */
+  totalFiles: number;
+}
+
+/** A file entry in a request. Omit both lines for the whole file. */
+export interface ReviewGroupFileInput {
+  path: string;
+  startLine?: number | null;
+  endLine?: number | null;
+}
+
+/** `POST …/groups`. */
+export interface CreateReviewGroupRequest {
+  name: string;
+  description?: string | null;
+  files?: ReviewGroupFileInput[];
+}
+
+/**
+ * `PATCH …/groups/:id`. `files` replaces the list; `addFiles`/`removeFiles`
+ * edit it in place and can't be sent with `files`. `position` moves the group
+ * (past the end → last).
+ */
+export interface UpdateReviewGroupRequest {
+  name?: string;
+  description?: string | null;
+  position?: number;
+  files?: ReviewGroupFileInput[];
+  addFiles?: ReviewGroupFileInput[];
+  removeFiles?: ReviewGroupFileInput[];
+}
+
+/** `PUT …/groups`: replace every group, in order. */
+export interface ReplaceReviewGroupsRequest {
+  groups: CreateReviewGroupRequest[];
+  /** Defaults to `manual`; send `ai` when accepting a generated preview. */
+  source?: ReviewGroupSource;
+}
