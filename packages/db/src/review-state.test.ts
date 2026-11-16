@@ -140,6 +140,90 @@ describe('review state', () => {
       });
     });
 
+    it('adds and removes files in place, skipping duplicates', async () => {
+      const g = await createGroup(
+        db,
+        PR,
+        {
+          name: 'g',
+          files: [{ path: 'a.ts' }, { path: 'b.ts', startLine: 1, endLine: 9 }],
+        },
+        ALICE,
+      );
+      const out = await updateGroup(db, PR, g.id, {
+        addFiles: [
+          { path: 'a.ts' }, // already there
+          { path: 'b.ts', startLine: 20, endLine: 30 },
+          { path: 'c.ts' },
+        ],
+        removeFiles: [{ path: 'b.ts', startLine: 1, endLine: 9 }],
+      });
+      expect(out?.files).toEqual([
+        { path: 'a.ts', startLine: null, endLine: null },
+        { path: 'b.ts', startLine: 20, endLine: 30 },
+        { path: 'c.ts', startLine: null, endLine: null },
+      ]);
+      // No range removes only the whole-file entry.
+      const out2 = await updateGroup(db, PR, g.id, {
+        removeFiles: [{ path: 'b.ts' }, { path: 'a.ts' }],
+      });
+      expect(out2?.files.map((f) => f.path)).toEqual(['b.ts', 'c.ts']);
+    });
+
+    it('rejects files together with addFiles/removeFiles', async () => {
+      const g = await createGroup(db, PR, { name: 'g', files: [] }, ALICE);
+      await expect(
+        updateGroup(db, PR, g.id, {
+          files: [{ path: 'a.ts' }],
+          addFiles: [{ path: 'b.ts' }],
+        }),
+      ).rejects.toBeInstanceOf(ReviewStateError);
+    });
+
+    it('caps files added in place', async () => {
+      const g = await createGroup(
+        db,
+        PR,
+        {
+          name: 'g',
+          files: Array.from(
+            { length: REVIEW_LIMITS.filesPerGroup },
+            (_, i) => ({
+              path: `f${i}.ts`,
+            }),
+          ),
+        },
+        ALICE,
+      );
+      await expect(
+        updateGroup(db, PR, g.id, { addFiles: [{ path: 'one-more.ts' }] }),
+      ).rejects.toBeInstanceOf(ReviewStateError);
+    });
+
+    it('moves a group to a position', async () => {
+      const a = await createGroup(db, PR, { name: 'a', files: [] }, ALICE);
+      await createGroup(db, PR, { name: 'b', files: [] }, ALICE);
+      const c = await createGroup(db, PR, { name: 'c', files: [] }, ALICE);
+      await updateGroup(db, PR, c.id, { position: 0 });
+      expect((await listGroups(db, PR)).map((g) => g.name)).toEqual([
+        'c',
+        'a',
+        'b',
+      ]);
+      // Past the end means last.
+      await updateGroup(db, PR, a.id, { position: 99 });
+      expect(
+        (await listGroups(db, PR)).map((g) => [g.name, g.position]),
+      ).toEqual([
+        ['c', 0],
+        ['b', 1],
+        ['a', 2],
+      ]);
+      await expect(
+        updateGroup(db, PR, a.id, { position: -1 }),
+      ).rejects.toBeInstanceOf(ReviewStateError);
+    });
+
     it('reorders groups and rejects an incomplete order', async () => {
       const a = await createGroup(db, PR, { name: 'a', files: [] }, ALICE);
       const b = await createGroup(db, PR, { name: 'b', files: [] }, ALICE);

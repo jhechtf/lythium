@@ -552,16 +552,65 @@ export async function replaceGroups(
   });
 }
 
-/** Update a group's name, description and/or files. Null if not found. */
+/**
+ * A change to one group. `files` replaces the whole file list; `addFiles` and
+ * `removeFiles` edit it in place (and can't be combined with `files`), so two
+ * people adding files to a shared group don't overwrite each other.
+ */
+export interface GroupPatch extends Partial<NewGroup> {
+  /** Move the group to this index in the display order (past the end → last). */
+  position?: number;
+  /** Add these entries; one already in the group (same path and range) is skipped. */
+  addFiles?: GroupFile[];
+  /** Remove entries with exactly this path and range (no range = the whole-file entry). */
+  removeFiles?: GroupFile[];
+}
+
+const fileKey = (f: {
+  path: string;
+  startLine: number | null;
+  endLine: number | null;
+}) => `${f.startLine ?? ''}:${f.endLine ?? ''}:${f.path}`;
+
+/** Write display order: each group's position is its index in `groupIds`. */
+async function writeOrder(tx: ReviewDb, pr: VerifiedPR, groupIds: number[]) {
+  if (groupIds.length === 0) return;
+  const ids = sql.join(
+    groupIds.map((id) => sql`${id}`),
+    sql`, `,
+  );
+  await tx
+    .update(reviewGroups)
+    .set({
+      position: sql`array_position(array[${ids}]::int[], ${reviewGroups.id}) - 1`,
+      updatedAt: new Date(),
+    })
+    .where(currentGroupsWhere(pr));
+}
+
+/** Update a group's name, description, position and/or files. Null if not found. */
 export async function updateGroup(
   db: ReviewDb,
   pr: EditablePR,
   groupId: number,
-  patch: Partial<NewGroup>,
+  patch: GroupPatch,
 ): Promise<ReviewGroup | null> {
   if (patch.name !== undefined) checkName(patch.name);
   checkDescription(patch.description);
   const files = patch.files ? normalizeFiles(patch.files) : undefined;
+  if (files && (patch.addFiles || patch.removeFiles)) {
+    throw new ReviewStateError('Use files, or addFiles/removeFiles, not both');
+  }
+  const addFiles = patch.addFiles ? normalizeFiles(patch.addFiles) : [];
+  const removeFiles = patch.removeFiles
+    ? normalizeFiles(patch.removeFiles)
+    : [];
+  if (
+    patch.position !== undefined &&
+    (!Number.isInteger(patch.position) || patch.position < 0)
+  ) {
+    throw new ReviewStateError('position must be a non-negative integer');
+  }
 
   return db.transaction(async (tx) => {
     await beginWrite(tx, pr);
@@ -577,6 +626,7 @@ export async function updateGroup(
       .where(groupWhere(pr, groupId))
       .returning({ id: reviewGroups.id });
     if (updated.length === 0) return null;
+
     if (files) {
       await tx
         .delete(reviewGroupFiles)
@@ -586,6 +636,54 @@ export async function updateGroup(
           .insert(reviewGroupFiles)
           .values(files.map((f) => ({ ...f, groupId })));
       }
+    } else if (addFiles.length > 0 || removeFiles.length > 0) {
+      const current = await tx
+        .select()
+        .from(reviewGroupFiles)
+        .where(eq(reviewGroupFiles.groupId, groupId));
+      const remove = new Set(removeFiles.map(fileKey));
+      const dropIds = current
+        .filter((f) => remove.has(fileKey(f)))
+        .map((f) => f.id);
+      const kept = new Set(
+        current.filter((f) => !remove.has(fileKey(f))).map(fileKey),
+      );
+      const insert: typeof addFiles = [];
+      for (const f of addFiles) {
+        const key = fileKey(f);
+        if (kept.has(key)) continue;
+        kept.add(key);
+        insert.push(f);
+      }
+      if (kept.size > REVIEW_LIMITS.filesPerGroup) {
+        throw new ReviewStateError(
+          `A group can have at most ${REVIEW_LIMITS.filesPerGroup} files`,
+        );
+      }
+      if (dropIds.length > 0) {
+        await tx
+          .delete(reviewGroupFiles)
+          .where(inArray(reviewGroupFiles.id, dropIds));
+      }
+      if (insert.length > 0) {
+        await tx
+          .insert(reviewGroupFiles)
+          .values(insert.map((f) => ({ ...f, groupId })));
+      }
+    }
+
+    if (patch.position !== undefined) {
+      const order = (
+        await tx
+          .select({ id: reviewGroups.id })
+          .from(reviewGroups)
+          .where(currentGroupsWhere(pr))
+          .orderBy(asc(reviewGroups.position), asc(reviewGroups.id))
+      )
+        .map((g) => g.id)
+        .filter((id) => id !== groupId);
+      order.splice(Math.min(patch.position, order.length), 0, groupId);
+      await writeOrder(tx, pr, order);
     }
     return readGroup(tx, pr, groupId);
   });
@@ -613,17 +711,7 @@ export async function reorderGroups(
     }
     if (groupIds.length === 0) return [];
     // One statement: each group's new position is its index in groupIds.
-    const ids = sql.join(
-      groupIds.map((id) => sql`${id}`),
-      sql`, `,
-    );
-    await tx
-      .update(reviewGroups)
-      .set({
-        position: sql`array_position(array[${ids}]::int[], ${reviewGroups.id}) - 1`,
-        updatedAt: new Date(),
-      })
-      .where(currentGroupsWhere(pr));
+    await writeOrder(tx, pr, groupIds);
     return readGroups(tx, pr);
   });
 }
