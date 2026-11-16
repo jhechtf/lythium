@@ -16,6 +16,7 @@ import {
   reorderGroups,
   replaceGroups,
   StaleHeadError,
+  setFilesViewed,
   setFileViewed,
   setGroupReviewed,
   updateGroup,
@@ -316,6 +317,38 @@ describe('review state', () => {
         groupsReviewed: 0,
         viewedFiles: [],
       });
+    });
+    it('marks and unmarks several files at once', async () => {
+      await setFilesViewed(db, PR, ALICE, ['a.ts', 'b.ts', 'a.ts'], true);
+      await setFilesViewed(db, PR, ALICE, ['b.ts', 'c.ts'], true);
+      expect((await getProgress(db, PR, ALICE)).viewedFiles).toEqual([
+        'a.ts',
+        'b.ts',
+        'c.ts',
+      ]);
+      await setFilesViewed(db, PR, ALICE, ['a.ts', 'zzz.ts'], false);
+      expect((await getProgress(db, PR, ALICE)).viewedFiles).toEqual([
+        'b.ts',
+        'c.ts',
+      ]);
+      expect((await getProgress(db, PR, BOB)).viewedFiles).toEqual([]);
+    });
+
+    it('rolls back a batch that would pass the viewed cap', async () => {
+      const many = Array.from(
+        { length: REVIEW_LIMITS.viewedFilesPerUser },
+        (_, i) => `f${i}.ts`,
+      );
+      await setFilesViewed(db, PR, ALICE, many, true);
+      await expect(
+        setFilesViewed(db, PR, ALICE, ['x.ts', 'y.ts'], true),
+      ).rejects.toBeInstanceOf(ReviewStateError);
+      expect((await getProgress(db, PR, ALICE)).viewedFiles).toHaveLength(
+        REVIEW_LIMITS.viewedFilesPerUser,
+      );
+      await expect(
+        setFilesViewed(db, PR, ALICE, [...many, 'x.ts'], true),
+      ).rejects.toBeInstanceOf(ReviewStateError);
     });
   });
 
