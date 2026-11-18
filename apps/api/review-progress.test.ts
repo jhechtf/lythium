@@ -144,6 +144,57 @@ describe('review progress', () => {
     expect((await markViewed([3], true)).status).toBe(400);
   });
 
+  it('404s a group id past the database integer range', async () => {
+    fakeGithub();
+    expect((await markReviewed(2147483647, true)).status).toBe(404);
+    expect((await markReviewed(2147483648, true)).status).toBe(404);
+    expect((await markReviewed(9999999999, true)).status).toBe(404);
+  });
+
+  describe('when the PR head moves during the files lookup', () => {
+    /** Push a new head (and file list) right after each files response. */
+    function pushAfterFiles(
+      fake: ReturnType<typeof fakeGithub>,
+      pushes: { sha: string; files: string[] }[],
+    ) {
+      const real = fake.fetchMock.getMockImplementation();
+      if (!real) throw new Error('fake GitHub has no implementation');
+      let next = 0;
+      fake.fetchMock.mockImplementation(async (input, init) => {
+        const res = await real(input, init);
+        if (new URL(input).pathname.endsWith('/files') && pushes[next]) {
+          const { sha, files } = pushes[next++];
+          fake.gh.headSha = sha;
+          fake.gh.files = files.map((filename) => ({
+            filename,
+            status: 'modified',
+          }));
+        }
+        return res;
+      });
+    }
+
+    it('looks both up again so the files match the reported head', async () => {
+      const fake = fakeGithub();
+      await markViewed(['api/a.ts'], true);
+      pushAfterFiles(fake, [{ sha: NEW_SHA, files: ['x.ts', 'y.ts'] }]);
+      const p = await progress();
+      expect(p.headSha).toBe(NEW_SHA);
+      expect(p.files).toEqual({ total: 2, viewed: 0, viewedPaths: [] });
+    });
+
+    it('answers 409 when the PR keeps moving', async () => {
+      const fake = fakeGithub();
+      const shas = ['c', 'd', 'e', 'f'].map((ch) => ch.repeat(40));
+      pushAfterFiles(
+        fake,
+        shas.map((sha) => ({ sha, files: ['x.ts'] })),
+      );
+      const res = await app.request(`${PR_URL}/progress`, as('reviewer'));
+      expect(res.status).toBe(409);
+    });
+  });
+
   it('does not fetch PR files to tick a file', async () => {
     const { fetchMock } = fakeGithub();
     await markViewed(['api/a.ts'], true);

@@ -8,6 +8,8 @@ import { Hono } from 'hono';
 import { requireReviewDb } from './review-context.ts';
 import {
   beforeBody,
+  groupId,
+  groupNotFound,
   guidedRequest,
   isObject,
   jsonBody,
@@ -46,10 +48,8 @@ function parseViewed(v: unknown): { paths: string[]; viewed: boolean } {
 
 export const reviewProgressRoutes = new Hono<ReviewEnv>()
   .put('/groups/:group_id/reviewed', ...beforeBody(1), async (c) => {
-    const raw = c.req.param('group_id');
-    if (!/^[1-9]\d{0,9}$/.test(raw)) {
-      return c.json({ error: `Group ${raw} not found` }, 404);
-    }
+    const id = groupId(c);
+    if (id === null) return groupNotFound(c, c.req.param('group_id'));
     try {
       const reviewed = parseReviewed(await jsonBody(c));
       const req = await guidedRequest(c, { files: false });
@@ -57,11 +57,11 @@ export const reviewProgressRoutes = new Hono<ReviewEnv>()
       const found = await setGroupReviewed(
         req.db,
         req.resolved.pr,
-        Number(raw),
+        id,
         req.viewer.id,
         reviewed,
       );
-      if (!found) return c.json({ error: `Group ${raw} not found` }, 404);
+      if (!found) return groupNotFound(c, id);
       return c.body(null, 204);
     } catch (err) {
       return stateError(c, err);

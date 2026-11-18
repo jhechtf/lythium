@@ -52,9 +52,10 @@ function toPRFile(f: GithubPRFile): PRFile | null {
  * `resolvePR`, which runs alongside) says how many pages remain, and those
  * are fetched in parallel. Without a count it falls back to paging serially.
  *
- * This reads the PR's current head, so a push between this and `resolvePR`
- * can make the two disagree; the write paths catch that through
- * `StaleHeadError`, and reads simply show the newer list.
+ * This reads the PR's current head and doesn't report which it was, so a push
+ * between this and `resolvePR` can make the two disagree. `guidedRequest`
+ * reads the head again afterwards and repeats both lookups if it moved; the
+ * write paths also catch a stale head through `StaleHeadError`.
  */
 export async function fetchPRFiles(
   token: string,
