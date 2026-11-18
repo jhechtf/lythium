@@ -25,6 +25,13 @@ Endpoints:
 GET /repos/:source/:owner/:repo/pr/:pr_number/diff
 GET /repos/:source/:owner/:repo/pr/:pr_number        # PR details + merge status (pr-details.ts)
 GET /repos/:source/:owner/:repo/pr/:pr_number/checks # CI state, counts and per-check detail (checks.ts)
+
+# Guided review (review-groups.ts; needs DATABASE_URL, else 503)
+GET    /repos/:source/:owner/:repo/pr/:pr_number/groups            # groups + unassigned files
+POST   /repos/:source/:owner/:repo/pr/:pr_number/groups            # create (author / push access)
+PUT    /repos/:source/:owner/:repo/pr/:pr_number/groups            # replace all (e.g. accept AI groups)
+PATCH  /repos/:source/:owner/:repo/pr/:pr_number/groups/:group_id  # rename, move, set/add/remove files
+DELETE /repos/:source/:owner/:repo/pr/:pr_number/groups/:group_id
 ```
 
 - **Checks**: check runs plus legacy commit statuses for the PR's head sha. Each check is normalized to `passed` (success, neutral), `failed`, `running` (anything not completed, or a pending status) or `skipped` (skipped, stale). Overall state is `failed` > `running` > `passed`, or `none` with no checks. Each list is capped at 1000 (`MAX_PAGES` × 100); when GitHub has more, the response sets `truncated: true` and a result that would be `passed` is `unknown` instead, because an unfetched check could be failing. Durations come from check-run start/finish and are null while running; commit statuses have no start time, so their duration is always null. The commit-status lookup is best-effort (tokens often lack the permission); a failing check-runs call fails the request. Both lists use `githubFetchAllCounted`: page 1 first, then the remaining pages (from `total_count`) in parallel, since the web app polls this while CI runs. The failing-conclusion set is shared with `pr-details.ts` (`FAILING_CONCLUSIONS`) so both endpoints classify a check the same way.
@@ -61,8 +68,18 @@ Guided review needs state GitHub doesn't hold: review groups, which groups a rev
 - **GitHub lookups**: `resolvePR` and `fetchViewer` use `githubFetch` with a 5s timeout (→ 504; network error → 502); a failure is a `FetchResult` to pass to `upstreamError`. `fetchViewer` caches the viewer for 60s, keyed by the SHA-256 of the token (never the raw token), max 1000 entries. Routes should run both lookups with `Promise.all`.
 - **No database required**: the API starts and serves the GitHub-backed routes without `DATABASE_URL`. The connection opens on first use (`getReviewDb`); guided-review routes use the `requireReviewDb` middleware, which answers 503 when it isn't set.
 
+# Review groups (LYT-61)
+
+- **Routes** live in `review-groups.ts`, mounted with `app.route` under the PR prefix. Each applies `requireReviewDb` itself (not `use('*')`, which would also match the GitHub-only routes). `guidedRequest(c, { files })` is the shared preamble: source, token, params, then `resolvePR`, `fetchViewer` and (when asked) `fetchPRFiles` in parallel. `stateError` maps `ReviewStateError` → 400 and `StaleHeadError` → 409. `route-params.ts` holds `repoParams`, `unsupportedSource` and `bearerToken` for every route. Write routes (`POST`/`PUT`/`PATCH`) run `checkRequest` (source, token, params) and `bodyLimit` (4 MB `POST`, 12 MB `PUT`/`PATCH`, → 413) before reading the body, so an unauthenticated caller can't make the API buffer and parse a large body.
+- **PR files** (`pr-files.ts`): `fetchPRFiles` pages `GET /pulls/{n}/files` (100 per page, up to GitHub's 3000-file cap). Most PRs are one call. When page 1 is full, the remaining pages come from the PR's `changed_files` (on `ResolvedPR`, from the `resolvePR` call running alongside) and are fetched in parallel; without a count it pages serially. `patch` is kept: AI clustering uses it for excerpts. Only routes that need the list fetch it: `GET` and `PUT /groups`, `POST` with files, `PATCH` with `files`/`addFiles`. Deleting a group or renaming it doesn't.
+- **Validation against the PR**: every added path must be a file the PR changes, and a line range can't be on a file the PR deletes (ranges refer to the new file). Removing an entry needn't match the PR, so a stale entry can be cleaned up. Range shape (both ends, start ≤ end, ≥ 1) is the data layer's check. Ranges aren't checked against the new file's length: that would need the file contents.
+- **Unassigned**: changed files that no group mentions. A file with only a line range in a group counts as assigned.
+- **PATCH**: `files` replaces the list; `addFiles`/`removeFiles` edit it in place inside the locked transaction (so two people adding files don't overwrite each other) and can't be combined with `files`. `removeFiles` matches path and range exactly; no range means the whole-file entry. `position` moves the group (past the end → last) in the same transaction.
+- **PUT**: `source: 'ai'` stores `createdBy: null` (AI groups have no human author, even when a person accepts them); `manual` stores the caller.
+- **Tests** use `@lythium/db/testing` (`createTestDb`, `resetReviewState`): PGlite with the real migrations, from the db package so there's one copy of drizzle-orm. `review-test-utils.ts` fakes the GitHub lookups.
+
 Migrations: `pnpm --filter @lythium/db generate` after a schema change, `DB_URL=… pnpm --filter @lythium/db migrate` to apply.
 
 # Types contract
 
-`types.ts` (`GitHubRef`, `DiffFile`, `StackPR`, `StackDiff`, `StackItem`, `StackDiffResponse`) is imported by the web app as `@lythium/api/types` (see `package.json` `exports`). Any change to these shapes is a breaking change for `apps/web` — update both sides together.
+`types.ts` (`GitHubRef`, `DiffFile`, `StackPR`, `StackDiff`, `StackItem`, `StackDiffResponse`, and the guided-review request/response types such as `ReviewGroup` and `ReviewGroupsResponse`) is imported by the web app as `@lythium/api/types` (see `package.json` `exports`). Any change to these shapes is a breaking change for `apps/web` — update both sides together.
