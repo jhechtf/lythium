@@ -28,6 +28,11 @@ jobs:
       pull-requests: write
       issues: read
       id-token: write
+    # What the clear job below needs. The model's output is untrusted data.
+    outputs:
+      conclusion: ${{ steps.claude.outputs.conclusion }}
+      before_ids: ${{ steps.before.outputs.ids }}
+      review_output: ${{ steps.claude.outputs.structured_output }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -162,19 +167,33 @@ jobs:
             --disallowedTools
             "Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,Workflow,CronCreate,CronDelete,ScheduleWakeup,EnterWorktree,SendMessage"
 
-      # Clear findings the bot no longer stands behind: resolve its fixed inline
-      # threads and dismiss request-changes reviews. This is a plain script, not
-      # the model: Claude is never given a way to resolve or dismiss.
-      # Runs only when the review finished cleanly. A failed, timed-out,
-      # turn-limited or cancelled run clears nothing.
-      - name: Clear Claude's addressed findings
-        if: success() && steps.claude.outputs.conclusion == 'success'
+  # Clear findings the bot no longer stands behind: resolve its fixed inline
+  # threads and dismiss request-changes reviews. This is a plain script, not
+  # the model: Claude is never given a way to resolve or dismiss.
+  #
+  # It is a separate job because `resolveReviewThread` needs `contents: write`
+  # on the token, and the review job, which runs the model with tools, stays at
+  # `contents: read`. This job checks out no code and runs only this script.
+  #
+  # Runs only when the review finished cleanly. A failed, timed-out,
+  # turn-limited or cancelled run clears nothing.
+  clear:
+    name: Clear Claude's addressed findings
+    needs: review
+    if: needs.review.result == 'success' && needs.review.outputs.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Resolve fixed threads and dismiss stale reviews
         uses: actions/github-script@v9
         env:
           REVIEW_BOT: claude[bot]
-          BEFORE_IDS: ${{ steps.before.outputs.ids }}
+          BEFORE_IDS: ${{ needs.review.outputs.before_ids }}
           # Model output: untrusted. Only used to pick among the bot's own threads.
-          REVIEW_OUTPUT: ${{ steps.claude.outputs.structured_output }}
+          REVIEW_OUTPUT: ${{ needs.review.outputs.review_output }}
         with:
           script: |
             const bot = process.env.REVIEW_BOT;
