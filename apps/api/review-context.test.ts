@@ -150,7 +150,13 @@ describe('resolvePR', () => {
   it('returns the PR with its head sha from GitHub', async () => {
     const fetchMock = vi.fn(
       async (_url: string, _init?: RequestInit) =>
-        new Response(JSON.stringify({ head: { sha: SHA }, changed_files: 3 })),
+        new Response(
+          JSON.stringify({
+            head: { sha: SHA },
+            base: { sha: 'c'.repeat(40) },
+            changed_files: 3,
+          }),
+        ),
     );
     vi.stubGlobal('fetch', fetchMock);
     const before = Date.now();
@@ -166,7 +172,10 @@ describe('resolvePR', () => {
       },
       authorId: null,
       canPush: false,
+      baseSha: 'c'.repeat(40),
       changedFiles: 3,
+      title: '',
+      body: null,
     });
     // The observation is stamped when GitHub answers, for ordering writes.
     const observedAt = (result as { pr: { observedAt: Date } }).pr.observedAt;

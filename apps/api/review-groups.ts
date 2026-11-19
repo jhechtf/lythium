@@ -120,6 +120,38 @@ export async function guidedRequest(
   };
 }
 
+/**
+ * The PR's files, for a route that called `guidedRequest` without them and
+ * only sometimes needs them. Like `guidedRequest`, reads the head again
+ * afterwards; if it moved from `req`'s, answers 409, since the caller has
+ * already keyed its work to that head.
+ */
+export async function filesAtHead(
+  c: Context<ReviewEnv>,
+  req: GuidedRequest,
+): Promise<PRFile[] | Response> {
+  const auth = bearerToken(c);
+  if (auth.error) return auth.error;
+  const params = repoParams(c);
+  if (params.error) return params.error;
+  const { owner, repo, pr_number } = params;
+  const n = Number(pr_number);
+  const files = await fetchPRFiles(
+    auth.token,
+    owner,
+    repo,
+    n,
+    req.resolved.changedFiles,
+  );
+  if (!files.ok) return upstreamError(c, files, pr_number);
+  const after = await resolvePR(auth.token, owner, repo, n);
+  if (!after.ok) return upstreamError(c, after, pr_number);
+  if (after.pr.headSha !== req.resolved.pr.headSha) {
+    return c.json({ error: 'The PR changed while loading; retry' }, 409);
+  }
+  return files.files;
+}
+
 /** Data-layer errors → responses: bad input 400, stale head 409. */
 export function stateError(c: Context, err: unknown): Response {
   if (err instanceof ReviewStateError) {
@@ -132,7 +164,7 @@ export function stateError(c: Context, err: unknown): Response {
 }
 
 /** The PR as editable by this caller, or a 403 response. */
-function requireEditable(
+export function requireEditable(
   c: Context,
   req: GuidedRequest,
 ): EditablePR | Response {
