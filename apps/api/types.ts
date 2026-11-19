@@ -227,3 +227,38 @@ export interface ReplaceReviewGroupsRequest {
   /** Defaults to `manual`; send `ai` when accepting a generated preview. */
   source?: ReviewGroupSource;
 }
+
+// ---------------------------------------------------------------------------
+// Guided review: progress (LYT-62). Private to the caller, reset by a push.
+// ---------------------------------------------------------------------------
+
+/** `GET …/progress`: "3 of 7 groups reviewed", "4 of 12 viewed". */
+export interface ReviewProgressResponse {
+  /** Progress belongs to this head sha; a push starts over. */
+  headSha: string;
+  groups: {
+    total: number;
+    reviewed: number;
+    /** Ascending. */
+    reviewedIds: number[];
+  };
+  files: {
+    /** Files the PR changes. */
+    total: number;
+    /** Viewed files that are still in the PR. */
+    viewed: number;
+    /** Sorted. */
+    viewedPaths: string[];
+  };
+}
+
+/** `PUT …/groups/:id/reviewed`. */
+export interface SetGroupReviewedRequest {
+  reviewed: boolean;
+}
+
+/** `PUT …/files/viewed`. */
+export interface SetFilesViewedRequest {
+  paths: string[];
+  viewed: boolean;
+}

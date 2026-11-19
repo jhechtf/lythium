@@ -46,6 +46,9 @@ import type {
 
 export type ReviewEnv = { Variables: { reviewDb: ReviewDb } };
 
+/** Extra tries when the PR's head moves during a files lookup. */
+const MAX_HEAD_RETRIES = 2;
+
 export interface GuidedRequest {
   db: ReviewDb;
   resolved: ResolvedPR;
@@ -72,20 +75,39 @@ export async function guidedRequest(
   const { owner, repo, pr_number } = params;
   const n = Number(pr_number);
 
-  const resolving = resolvePR(auth.token, owner, repo, n);
-  const [resolved, viewer, files] = await Promise.all([
-    resolving,
-    fetchViewer(auth.token),
-    opts.files
-      ? fetchPRFiles(
-          auth.token,
-          owner,
-          repo,
-          n,
-          resolving.then((r) => (r.ok ? r.changedFiles : null)),
-        )
-      : null,
-  ]);
+  const lookup = async () => {
+    const resolving = resolvePR(auth.token, owner, repo, n);
+    return Promise.all([
+      resolving,
+      opts.files
+        ? fetchPRFiles(
+            auth.token,
+            owner,
+            repo,
+            n,
+            resolving.then((r) => (r.ok ? r.changedFiles : null)),
+          )
+        : null,
+    ]);
+  };
+  const viewerLookup = fetchViewer(auth.token);
+  let [resolved, files] = await lookup();
+  // The files API reads the PR's current head and doesn't say which it was,
+  // so a push between it and `resolvePR` would pair one head's files with
+  // another's marks. Read the head again afterwards; if it moved, look both
+  // up again, and give up with a 409 if the PR keeps moving.
+  for (let retry = 0; files?.ok && resolved.ok; retry++) {
+    const after = await resolvePR(auth.token, owner, repo, n);
+    if (!after.ok) return { error: upstreamError(c, after, pr_number) };
+    if (after.pr.headSha === resolved.pr.headSha) break;
+    if (retry >= MAX_HEAD_RETRIES) {
+      return {
+        error: c.json({ error: 'The PR changed while loading; retry' }, 409),
+      };
+    }
+    [resolved, files] = await lookup();
+  }
+  const viewer = await viewerLookup;
   if (!resolved.ok) return { error: upstreamError(c, resolved, pr_number) };
   if (!viewer.ok) return { error: upstreamError(c, viewer, pr_number) };
   if (files && !files.ok) return { error: upstreamError(c, files, pr_number) };
@@ -131,7 +153,7 @@ function requireEditable(
 // through `stateError` like the data layer's own checks.
 // ---------------------------------------------------------------------------
 
-const isObject = (v: unknown): v is Record<string, unknown> =>
+export const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 const optionalLine = (v: unknown, field: string) => {
@@ -240,7 +262,7 @@ const limitBody = (mb: number) =>
   });
 
 /** Middleware every write route runs before its handler reads the body. */
-const beforeBody = (mb: number) =>
+export const beforeBody = (mb: number) =>
   [requireReviewDb, checkRequest, limitBody(mb)] as const;
 
 /**
@@ -248,18 +270,28 @@ const beforeBody = (mb: number) =>
  * A body that streams past `bodyLimit` (no Content-Length) fails while being
  * read; that error is rethrown so `bodyLimit` answers 413.
  */
-const jsonBody = (c: Context) =>
+export const jsonBody = (c: Context) =>
   c.req.json().catch((err: unknown) => {
     if (err instanceof Error && err.name === 'BodyLimitError') throw err;
     return undefined;
   });
 
-function groupId(c: Context): number | null {
+/** Largest value of a Postgres `serial` (int4) id. */
+const MAX_GROUP_ID = 2_147_483_647;
+
+/**
+ * The `:group_id` param as a number, or null when it can't be a group id.
+ * Ids past the `serial` range are rejected here: the database would throw on
+ * the comparison instead of finding nothing, and that would be a 500.
+ */
+export function groupId(c: Context): number | null {
   const id = c.req.param('group_id') ?? '';
-  return /^[1-9]\d{0,9}$/.test(id) ? Number(id) : null;
+  if (!/^[1-9]\d{0,9}$/.test(id)) return null;
+  const n = Number(id);
+  return n <= MAX_GROUP_ID ? n : null;
 }
 
-const groupNotFound = (c: Context, id: string | number) =>
+export const groupNotFound = (c: Context, id: string | number) =>
   c.json({ error: `Group ${id} not found` }, 404);
 
 /** A group entry referenced a file the PR doesn't change: 400. */

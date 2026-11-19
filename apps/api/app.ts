@@ -14,6 +14,7 @@ import {
   type GithubReview,
 } from './pr-details.ts';
 import { reviewGroupRoutes } from './review-groups.ts';
+import { reviewProgressRoutes } from './review-progress.ts';
 import { bearerToken, repoParams, unsupportedSource } from './route-params.ts';
 import type {
   DiffFile,
@@ -341,6 +342,7 @@ export const app = new Hono()
       }),
     );
   })
-  .route('/repos/:source/:owner/:repo/pr/:pr_number', reviewGroupRoutes);
+  .route('/repos/:source/:owner/:repo/pr/:pr_number', reviewGroupRoutes)
+  .route('/repos/:source/:owner/:repo/pr/:pr_number', reviewProgressRoutes);
 
 export type AppType = typeof app;
