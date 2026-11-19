@@ -16,6 +16,7 @@ import {
   GENERATE_RATE,
   GLOBAL_MODEL_RATE,
   getClusterer,
+  positiveInt,
   resetGenerateState,
   resetUserLimits,
   setClusterer,
@@ -127,6 +128,43 @@ describe('POST …/groups/generate', () => {
     gh.headSha = NEW_SHA;
     await generate({ strategy: 'feature' });
     expect(cluster).toHaveBeenCalledTimes(4);
+  });
+
+  it('serves a cache hit without fetching the PR files', async () => {
+    const { fetchMock } = fakeGithub();
+    modelClusterer();
+    await generate({ strategy: 'feature' });
+    fetchMock.mockClear();
+    const again = (await (
+      await generate({ strategy: 'feature' })
+    ).json()) as GenerateGroupsResponse;
+    expect(again.cached).toBe(true);
+    const paths = fetchMock.mock.calls.map(([u]) => new URL(u).pathname);
+    expect(paths.some((p) => p.endsWith('/files'))).toBe(false);
+  });
+
+  it('409s when the head moves while fetching files on a miss', async () => {
+    const { gh, fetchMock } = fakeGithub();
+    const cluster = modelClusterer();
+    const base = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (input, init) => {
+      // The push lands while the files are being read.
+      if (new URL(input).pathname.endsWith('/files')) gh.headSha = NEW_SHA;
+      return base?.(input, init) as Promise<Response>;
+    });
+    const res = await generate({ strategy: 'feature' });
+    expect(res.status).toBe(409);
+    expect(cluster).not.toHaveBeenCalled();
+  });
+
+  it('does not charge an empty PR', async () => {
+    fakeGithub({ files: [] });
+    const cluster = modelClusterer();
+    for (let i = 0; i <= GENERATE_RATE.limit; i++) {
+      const res = await generate({ strategy: 'feature', regenerate: true });
+      expect(res.status).toBe(200);
+    }
+    expect(cluster).not.toHaveBeenCalled();
   });
 
   it('rate-limits model generations per user, not cache hits', async () => {
@@ -256,6 +294,15 @@ describe('POST …/groups/generate', () => {
       { strategy: 'feature', regenerate: 'yes' },
     ]) {
       expect((await generate(body)).status, JSON.stringify(body)).toBe(400);
+    }
+  });
+});
+
+describe('positiveInt', () => {
+  it('accepts only positive integers', () => {
+    expect(positiveInt('50', 300)).toBe(50);
+    for (const bad of [undefined, '', '0', '-5', '0.5', 'abc', 'Infinity']) {
+      expect(positiveInt(bad, 300)).toBe(300);
     }
   });
 });

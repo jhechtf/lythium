@@ -4,13 +4,16 @@ import { AnthropicClusterer } from './clustering/anthropic.ts';
 import type { Clusterer } from './clustering/clusterer.ts';
 import {
   byDirectory,
+  chunkFiles,
   type GenerateResult,
   generateGroups,
   modelCalls,
 } from './clustering/generate.ts';
 import { SlidingWindowLimiter, TtlCache } from './clustering/limits.ts';
+import type { PRFile } from './pr-files.ts';
 import {
   beforeBody,
+  filesAtHead,
   guidedRequest,
   isObject,
   jsonBody,
@@ -84,9 +87,18 @@ export const GENERATE_RATE = { limit: 40, windowMs: 10 * 60_000 };
  * When it's used up, generation falls back to directory grouping.
  */
 export const GLOBAL_MODEL_RATE = {
-  limit: Number(process.env.CLUSTER_MAX_CALLS_PER_HOUR) || 300,
+  limit: positiveInt(process.env.CLUSTER_MAX_CALLS_PER_HOUR, 300),
   windowMs: 60 * 60_000,
 };
+/**
+ * `value` as a positive integer, else `fallback`. A zero, negative or
+ * fractional budget would switch the limit off rather than tighten it.
+ */
+export function positiveInt(value: string | undefined, fallback: number) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
 /** Cached previews: per PR head sha + settings. */
 export const PREVIEW_CACHE = { max: 500, ttlMs: 60 * 60_000 };
 
@@ -158,28 +170,42 @@ export const reviewGenerateRoutes = new Hono<ReviewEnv>().post(
       const { strategy, granularity, regenerate } = parseGenerate(
         await jsonBody(c),
       );
-      const req = await guidedRequest(c, { files: true });
+      // No files yet: a cache hit needs only the head sha.
+      const req = await guidedRequest(c, { files: false });
       if ('error' in req) return req.error;
       const pr = requireEditable(c, req);
       if (pr instanceof Response) return pr;
 
       let model = strategy === 'directory' ? null : getClusterer();
       const key = `${pr.owner}/${pr.repo}#${pr.prNumber}@${pr.headSha}:${strategy}:${granularity}`;
+      const cachedPreview = () =>
+        regenerate || !model ? undefined : previews.get(key);
       let cached = false;
-      let pending = regenerate || !model ? undefined : previews.get(key);
+      let pending = cachedPreview();
+      let files: PRFile[] = [];
+      if (!pending) {
+        const fetched = await filesAtHead(c, req);
+        if (fetched instanceof Response) return fetched;
+        files = fetched;
+        // An identical request may have started generating while we fetched.
+        pending = cachedPreview();
+      }
       if (pending) {
         cached = true;
       } else {
+        const chunks = model ? chunkFiles(files) : [];
         const input = {
           strategy,
           granularity,
           pr: { title: req.resolved.title, body: req.resolved.body },
-          files: req.prFiles,
+          files,
+          chunks,
         };
+        const cost = modelCalls(chunks);
         let overBudget = false;
-        if (model) {
+        // An empty PR makes no model call, so it isn't charged.
+        if (model && cost > 0) {
           const user = String(req.viewer.id);
-          const cost = modelCalls(req.prFiles);
           // Check the user's own limit first, so a 429 doesn't spend the
           // instance budget.
           const allowed = limiter.check(user, cost);
@@ -193,6 +219,7 @@ export const reviewGenerateRoutes = new Hono<ReviewEnv>().post(
               429,
             );
           }
+          // A cost above the whole budget is refused, not clamped.
           if (globalLimiter.take('*', cost).ok) {
             limiter.take(user, cost);
           } else {

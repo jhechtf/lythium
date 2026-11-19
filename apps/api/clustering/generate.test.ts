@@ -392,10 +392,10 @@ describe('generateGroups', () => {
   });
 
   it('counts model calls: one per chunk, plus a merge', () => {
-    expect(modelCalls([])).toBe(0);
-    expect(modelCalls(FILES)).toBe(1);
+    expect(modelCalls(chunkFiles([]))).toBe(0);
+    expect(modelCalls(chunkFiles(FILES))).toBe(1);
     const many = Array.from({ length: 600 }, (_, i) => file(`f${i}.ts`));
-    expect(modelCalls(many)).toBe(4);
+    expect(modelCalls(chunkFiles(many))).toBe(4);
   });
 
   it('never calls the model for the directory strategy or an empty PR', async () => {

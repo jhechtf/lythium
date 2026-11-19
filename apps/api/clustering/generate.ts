@@ -60,6 +60,8 @@ export interface GenerateInput {
   granularity: ClusterGranularity;
   pr: { title: string; body: string | null };
   files: PRFile[];
+  /** `chunkFiles(files)`, when the caller already has it. */
+  chunks?: ClusterFile[][];
 }
 
 export interface GenerateResult {
@@ -129,13 +131,12 @@ export function chunkFiles(prFiles: PRFile[]): ClusterFile[][] {
 }
 
 /**
- * Model calls a generation over these files makes: one per chunk, plus a
- * merge when there is more than one chunk. Rate limits charge this.
+ * Model calls a generation over these chunks (from `chunkFiles`) makes: one
+ * per chunk, plus a merge when there is more than one. Rate limits charge
+ * this; pass the same chunks to `generateGroups` so the charge matches.
  */
-export function modelCalls(prFiles: PRFile[]): number {
-  if (prFiles.length === 0) return 0;
-  const chunks = chunkFiles(prFiles).length;
-  return chunks > 1 ? chunks + 1 : chunks;
+export function modelCalls(chunks: ClusterFile[][]): number {
+  return chunks.length > 1 ? chunks.length + 1 : chunks.length;
 }
 
 /**
@@ -229,7 +230,7 @@ async function clusterWithModel(
   input: GenerateInput & { strategy: 'feature' | 'layer' },
 ): Promise<DraftGroup[]> {
   const target = GRANULARITY[input.granularity];
-  const chunks = chunkFiles(input.files);
+  const chunks = input.chunks ?? chunkFiles(input.files);
   const perChunk = await mapLimited(
     chunks,
     CLUSTER_LIMITS.concurrency,

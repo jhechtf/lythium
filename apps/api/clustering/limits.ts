@@ -18,15 +18,19 @@ export class SlidingWindowLimiter {
 
   /**
    * Whether `cost` hits fit now, or how many seconds until they do. Doesn't
-   * record anything. A cost above the limit is charged as the limit.
+   * record anything. A cost above the whole limit never fits: it's refused
+   * with the window length as the retry time, not let through at the limit.
    */
   check(
     key: string,
     cost = 1,
   ): { ok: true } | { ok: false; retryAfterSec: number } {
+    const n = Math.max(cost, 1);
+    if (n > this.limit) {
+      return { ok: false, retryAfterSec: Math.ceil(this.windowMs / 1000) };
+    }
     const now = this.now();
     const recent = this.recent(key, now);
-    const n = Math.min(Math.max(cost, 1), this.limit);
     if (recent.length + n <= this.limit) return { ok: true };
     // Enough of the oldest hits have to expire to leave room for n.
     const mustExpire = recent[recent.length + n - this.limit - 1];
@@ -46,7 +50,7 @@ export class SlidingWindowLimiter {
     if (!allowed.ok) return allowed;
     const now = this.now();
     const recent = this.recent(key, now);
-    const n = Math.min(Math.max(cost, 1), this.limit);
+    const n = Math.max(cost, 1);
     for (let i = 0; i < n; i++) recent.push(now);
     this.hits.set(key, recent);
     // Keep the map from growing without bound: drop keys with no recent hits.
