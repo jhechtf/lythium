@@ -16,11 +16,11 @@ import {
   filesAtHead,
   guidedRequest,
   isObject,
-  jsonBody,
   type ReviewEnv,
   requireEditable,
   stateError,
 } from './review-groups.ts';
+import { jsonBody } from './route-params.ts';
 import type {
   ClusterGranularity,
   ClusterStrategy,

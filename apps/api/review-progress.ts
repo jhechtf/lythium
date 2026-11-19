@@ -12,10 +12,10 @@ import {
   groupNotFound,
   guidedRequest,
   isObject,
-  jsonBody,
   type ReviewEnv,
   stateError,
 } from './review-groups.ts';
+import { jsonBody } from './route-params.ts';
 import type { ReviewProgressResponse } from './types.ts';
 
 /**

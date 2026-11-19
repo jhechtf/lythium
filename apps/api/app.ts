@@ -5,7 +5,12 @@ import {
   type GithubCheckRunFull,
   type GithubCommitStatus,
 } from './checks.ts';
-import { type FetchResult, githubFetch, upstreamError } from './github.ts';
+import {
+  type FetchResult,
+  githubFetch,
+  githubFetchAll,
+  upstreamError,
+} from './github.ts';
 import {
   buildPRDetails,
   type GithubCheckRun,
@@ -13,6 +18,7 @@ import {
   type GithubPRFull,
   type GithubReview,
 } from './pr-details.ts';
+import { submitReviewRoutes } from './pr-review.ts';
 import { reviewGenerateRoutes } from './review-generate.ts';
 import { reviewGroupRoutes } from './review-groups.ts';
 import { reviewProgressRoutes } from './review-progress.ts';
@@ -65,27 +71,6 @@ function shapePR(pr: GithubPR): StackPR {
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 10;
-
-/** Fetch every page of a list endpoint (a full page means there may be more). */
-async function githubFetchAll<T>(
-  path: string,
-  token: string,
-  pick: (data: unknown) => T[],
-): Promise<{ ok: true; items: T[] } | { ok: false; result: FetchResult }> {
-  const sep = path.includes('?') ? '&' : '?';
-  const items: T[] = [];
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const result = await githubFetch(
-      `${path}${sep}per_page=${PAGE_SIZE}&page=${page}`,
-      token,
-    );
-    if (!result.ok) return { ok: false, result };
-    const batch = pick(result.data);
-    items.push(...batch);
-    if (batch.length < PAGE_SIZE) break;
-  }
-  return { ok: true, items };
-}
 
 /**
  * Like `githubFetchAll`, for endpoints that report `total_count`: fetch page
@@ -343,6 +328,7 @@ export const app = new Hono()
       }),
     );
   })
+  .route('/repos/:source/:owner/:repo/pr/:pr_number', submitReviewRoutes)
   .route('/repos/:source/:owner/:repo/pr/:pr_number', reviewGenerateRoutes)
   .route('/repos/:source/:owner/:repo/pr/:pr_number', reviewGroupRoutes)
   .route('/repos/:source/:owner/:repo/pr/:pr_number', reviewProgressRoutes);

@@ -68,6 +68,93 @@ export async function githubFetch(
 }
 
 /**
+ * POST JSON to the GitHub API. Same contract as `githubFetch`: never throws,
+ * 504 on timeout, 502 on a network error or unreadable body. A failed write's
+ * `data` is GitHub's raw error text (see `githubErrorMessage`). A timeout
+ * doesn't mean the write failed: GitHub may still have applied it.
+ */
+export async function githubPost(
+  path: string,
+  token: string,
+  body: unknown,
+  timeoutMs = GITHUB_TIMEOUT_MS,
+): Promise<FetchResult> {
+  try {
+    const res = await fetch(`https://api.github.com${path}`, {
+      method: 'POST',
+      headers: { ...githubHeaders(token), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const data: unknown = res.ok ? await res.json() : await res.text();
+    return { ok: res.ok, status: res.status, data, headers: res.headers };
+  } catch (err) {
+    const name = (err as { name?: string } | null)?.name;
+    return localFailure(
+      name === 'TimeoutError' || name === 'AbortError' ? 504 : 502,
+    );
+  }
+}
+
+/**
+ * GitHub's explanation of a failed request (e.g. a 422's "Can not approve
+ * your own pull request"), from its JSON error body: the entries in `errors`
+ * if any, else `message`. Null when the body has neither.
+ */
+export function githubErrorMessage(data: unknown): string | null {
+  let parsed: unknown = data;
+  if (typeof data === 'string') {
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const { message, errors } = parsed as { message?: unknown; errors?: unknown };
+  if (Array.isArray(errors)) {
+    const details = errors
+      .map((e) =>
+        typeof e === 'string'
+          ? e
+          : typeof (e as { message?: unknown })?.message === 'string'
+            ? (e as { message: string }).message
+            : null,
+      )
+      .filter((m): m is string => !!m);
+    if (details.length > 0) return details.join('; ');
+  }
+  return typeof message === 'string' && message ? message : null;
+}
+
+const PAGE_SIZE = 100;
+const MAX_PAGES = 10;
+
+/**
+ * Fetch every page of a list endpoint (a full page means there may be more),
+ * up to `MAX_PAGES` × 100 items.
+ */
+export async function githubFetchAll<T>(
+  path: string,
+  token: string,
+  pick: (data: unknown) => T[],
+): Promise<{ ok: true; items: T[] } | { ok: false; result: FetchResult }> {
+  const sep = path.includes('?') ? '&' : '?';
+  const items: T[] = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const result = await githubFetch(
+      `${path}${sep}per_page=${PAGE_SIZE}&page=${page}`,
+      token,
+    );
+    if (!result.ok) return { ok: false, result };
+    const batch = pick(result.data);
+    items.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+  }
+  return { ok: true, items };
+}
+
+/**
  * GitHub answers 403 both for rate limits and for missing permissions. Only
  * the rate-limit kind says so: `x-ratelimit-remaining: 0` (primary) or a
  * `Retry-After` header (secondary).
