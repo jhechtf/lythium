@@ -1,4 +1,6 @@
 import type { Context } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
+import { createMiddleware } from 'hono/factory';
 import { isGithubName } from './github.ts';
 
 /**
@@ -48,3 +50,43 @@ export function bearerToken(c: Context) {
   }
   return { token: authHeader.slice(7) } as const;
 }
+
+/**
+ * Cheap checks for write routes, before the body is read: source, token and
+ * params. A caller without a token can't make the API buffer a body. Handlers
+ * repeat them later to get the values; they're pure and cost nothing.
+ */
+const checkRequest = createMiddleware(async (c, next) => {
+  const badSource = unsupportedSource(c, c.req.param('source') ?? '');
+  if (badSource) return badSource;
+  const auth = bearerToken(c);
+  if (auth.error) return auth.error;
+  const params = repoParams(c);
+  if (params.error) return params.error;
+  await next();
+});
+
+/** Cap a write's body (→ 413) before it is buffered and parsed. */
+const limitBody = (maxSize: number) =>
+  bodyLimit({
+    maxSize,
+    onError: (c) => c.json({ error: 'Request body too large' }, 413),
+  });
+
+/**
+ * Middleware a write route runs before its handler reads the body: the cheap
+ * request checks, then a body cap of `mb` megabytes.
+ */
+export const beforeBodyChecks = (mb: number) =>
+  [checkRequest, limitBody(mb * 1024 * 1024)] as const;
+
+/**
+ * The JSON body, or undefined when it isn't JSON (parsers then answer 400).
+ * A body that streams past `bodyLimit` (no Content-Length) fails while being
+ * read; that error is rethrown so `bodyLimit` answers 413.
+ */
+export const jsonBody = (c: Context) =>
+  c.req.json().catch((err: unknown) => {
+    if (err instanceof Error && err.name === 'BodyLimitError') throw err;
+    return undefined;
+  });

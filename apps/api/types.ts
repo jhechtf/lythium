@@ -157,6 +157,54 @@ export interface PRDetailsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Submitting a review (LYT-57)
+// ---------------------------------------------------------------------------
+
+export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+
+/** `POST …/reviews`: the "Finish Review" button. */
+export interface SubmitReviewRequest {
+  event: ReviewEvent;
+  /** Summary comment. Required for REQUEST_CHANGES and COMMENT unless a pending review holds comments. */
+  body?: string;
+  /**
+   * The head sha the reviewer looked at. When the PR has moved on since,
+   * the API answers 409 (`stale_head`) instead of reviewing code the reviewer
+   * hasn't seen; resend without it to review the current head anyway.
+   */
+  commitId?: string;
+}
+
+export interface SubmitReviewResponse {
+  id: number;
+  /** GitHub's review state, e.g. `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`. */
+  state: string;
+  body: string | null;
+  /** The commit the review applies to. */
+  commitId: string | null;
+  htmlUrl: string | null;
+  submittedAt: string | null;
+  /** True when this submitted the caller's pending review (with its comments). */
+  fromPending: boolean;
+}
+
+/**
+ * `code` on a failed submit, next to `error`:
+ * - `own_pr` (422): the author can't approve or request changes on their own PR
+ * - `body_required` (400): REQUEST_CHANGES and COMMENT need a summary
+ * - `stale_head` (409): `commitId` isn't the PR's head (`headSha` is), or the
+ *   caller's pending review is on an older commit (`pendingCommitId`) and the
+ *   event isn't COMMENT. A pending review can't be moved to a new commit, so
+ *   only a comment review can publish it.
+ * - `rejected` (422): GitHub refused the review; `error` is its reason
+ */
+export type SubmitReviewErrorCode =
+  | 'own_pr'
+  | 'body_required'
+  | 'stale_head'
+  | 'rejected';
+
+// ---------------------------------------------------------------------------
 // Guided review: groups (LYT-61)
 // ---------------------------------------------------------------------------
 
