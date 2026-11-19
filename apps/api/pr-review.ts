@@ -74,6 +74,8 @@ interface GithubReviewSummary {
   id: number;
   state: string;
   user: { id: number } | null;
+  /** The commit the review is attached to; fixed when a pending review is started. */
+  commit_id?: string | null;
 }
 
 interface GithubSubmittedReview {
@@ -158,6 +160,22 @@ export const submitReviewRoutes = new Hono().post(
     const pending = reviews.items.find(
       (r) => r.state === 'PENDING' && r.user?.id === viewer.viewer.id,
     );
+
+    // A pending review stays on the commit it was started on, and submitting
+    // it can't move it. Approving or requesting changes through one started
+    // before a push would put that verdict on code older than the head, so
+    // only a comment review may publish it (its inline comments then show as
+    // outdated, as on GitHub). A missing commit_id is treated as stale.
+    const pendingCommit = pending?.commit_id?.toLowerCase() ?? null;
+    if (pending && pendingCommit !== headSha && input.event !== 'COMMENT') {
+      return failure(
+        c,
+        409,
+        'stale_head',
+        'Your pending review was started before the latest commits. Submit it as a comment, then review the new commits.',
+        { headSha, pendingCommitId: pendingCommit },
+      );
+    }
 
     if (!pending && input.event !== 'APPROVE' && input.body === undefined) {
       return failure(

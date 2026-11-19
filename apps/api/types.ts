@@ -192,7 +192,10 @@ export interface SubmitReviewResponse {
  * `code` on a failed submit, next to `error`:
  * - `own_pr` (422): the author can't approve or request changes on their own PR
  * - `body_required` (400): REQUEST_CHANGES and COMMENT need a summary
- * - `stale_head` (409): `commitId` isn't the PR's head; `headSha` is
+ * - `stale_head` (409): `commitId` isn't the PR's head (`headSha` is), or the
+ *   caller's pending review is on an older commit (`pendingCommitId`) and the
+ *   event isn't COMMENT. A pending review can't be moved to a new commit, so
+ *   only a comment review can publish it.
  * - `rejected` (422): GitHub refused the review; `error` is its reason
  */
 export type SubmitReviewErrorCode =

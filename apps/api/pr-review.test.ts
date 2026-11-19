@@ -13,7 +13,12 @@ interface Posted {
 
 interface FakeOptions {
   /** Reviews `GET …/reviews` returns. */
-  reviews?: { id: number; state: string; user: { id: number } | null }[];
+  reviews?: {
+    id: number;
+    state: string;
+    user: { id: number } | null;
+    commit_id?: string;
+  }[];
   /** Answer the review POST with this status and body instead of success. */
   postFailure?: { status: number; body: unknown; headers?: HeadersInit };
 }
@@ -156,6 +161,60 @@ describe('POST …/reviews', () => {
     const res = await submit({ event: 'APPROVE' });
     expect(res.status).toBe(200);
     expect(posted[0].path).toBe('/repos/o/r/pulls/7/reviews');
+  });
+
+  it('approves through a pending review started on the current head', async () => {
+    const { posted } = fakeReviewGithub({
+      reviews: [
+        { id: 12, state: 'PENDING', commit_id: SHA, user: { id: REVIEWER } },
+      ],
+    });
+    const res = await submit({ event: 'APPROVE', commitId: SHA });
+    expect(res.status).toBe(200);
+    expect(posted[0].path).toBe('/repos/o/r/pulls/7/reviews/12/events');
+  });
+
+  describe('a pending review started before the latest push', () => {
+    const OLD = 'd'.repeat(40);
+    const stale = () =>
+      fakeReviewGithub({
+        reviews: [
+          { id: 12, state: 'PENDING', commit_id: OLD, user: { id: REVIEWER } },
+        ],
+      });
+
+    it.each([
+      'APPROVE',
+      'REQUEST_CHANGES',
+    ])('refuses %s, with or without commitId', async (event) => {
+      const { posted } = stale();
+      for (const commitId of [undefined, SHA]) {
+        const res = await submit({ event, body: 'x', commitId });
+        expect(res.status).toBe(409);
+        expect(await res.json()).toMatchObject({
+          code: 'stale_head',
+          headSha: SHA,
+          pendingCommitId: OLD,
+        });
+      }
+      expect(posted).toEqual([]);
+    });
+
+    it('can still be published as a comment review', async () => {
+      const { posted } = stale();
+      const res = await submit({ event: 'COMMENT' });
+      expect(res.status).toBe(200);
+      expect(posted[0].path).toBe('/repos/o/r/pulls/7/reviews/12/events');
+    });
+
+    it('treats a pending review without a commit as stale', async () => {
+      fakeReviewGithub({
+        reviews: [{ id: 12, state: 'PENDING', user: { id: REVIEWER } }],
+      });
+      const res = await submit({ event: 'APPROVE' });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ pendingCommitId: null });
+    });
   });
 
   it.each([
