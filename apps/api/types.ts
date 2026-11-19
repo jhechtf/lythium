@@ -283,7 +283,9 @@ export type GenerateFallbackReason =
   | 'refused'
   | 'model_error'
   /** The instance's model-call budget is used up for now. */
-  | 'rate_limited';
+  | 'rate_limited'
+  /** Too many files to send in `maxChunks` chunks, even without excerpts. */
+  | 'too_large';
 
 /** `POST …/groups/generate`. */
 export interface GenerateGroupsRequest {

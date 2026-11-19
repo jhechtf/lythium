@@ -11,6 +11,7 @@ import {
 } from 'vitest';
 import { app } from './app.ts';
 import type { Clusterer } from './clustering/clusterer.ts';
+import { CLUSTER_LIMITS } from './clustering/generate.ts';
 import { clearViewerCache, setReviewDb } from './review-context.ts';
 import {
   GENERATE_RATE,
@@ -128,6 +129,27 @@ describe('POST …/groups/generate', () => {
     gh.headSha = NEW_SHA;
     await generate({ strategy: 'feature' });
     expect(cluster).toHaveBeenCalledTimes(4);
+  });
+
+  it('misses the cache when the PR is retargeted onto a new base', async () => {
+    const { gh } = fakeGithub();
+    const cluster = modelClusterer();
+    await generate({ strategy: 'feature' });
+    // Same head, new base (e.g. parent branch → main): different files.
+    gh.baseSha = NEW_SHA;
+    gh.files = [...gh.files, { filename: 'api/new.ts', status: 'added' }];
+    const out = (await (
+      await generate({ strategy: 'feature' })
+    ).json()) as GenerateGroupsResponse;
+    expect(out.cached).toBe(false);
+    expect(cluster).toHaveBeenCalledTimes(2);
+    expect(out.groups.flatMap((g) => g.files)).toContain('api/new.ts');
+  });
+
+  it('lets one user afford the largest generation, so a 429 is retryable', () => {
+    expect(GENERATE_RATE.limit).toBeGreaterThanOrEqual(
+      CLUSTER_LIMITS.maxChunks + 1,
+    );
   });
 
   it('serves a cache hit without fetching the PR files', async () => {

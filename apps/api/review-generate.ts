@@ -76,7 +76,8 @@ export function setClusterer(c: Clusterer | null | undefined) {
 
 /**
  * Model calls per GitHub user per window. Cache hits don't count. Must be at
- * least the most one generation can make (12 chunks + 1 merge).
+ * least the most one generation can make (`maxChunks` + 1 merge), so a 429
+ * can always succeed after `Retry-After`.
  */
 export const GENERATE_RATE = { limit: 40, windowMs: 10 * 60_000 };
 
@@ -177,7 +178,8 @@ export const reviewGenerateRoutes = new Hono<ReviewEnv>().post(
       if (pr instanceof Response) return pr;
 
       let model = strategy === 'directory' ? null : getClusterer();
-      const key = `${pr.owner}/${pr.repo}#${pr.prNumber}@${pr.headSha}:${strategy}:${granularity}`;
+      // The base too: retargeting a PR changes its files, not its head.
+      const key = `${pr.owner}/${pr.repo}#${pr.prNumber}@${pr.headSha}...${req.resolved.baseSha}:${strategy}:${granularity}`;
       const cachedPreview = () =>
         regenerate || !model ? undefined : previews.get(key);
       let cached = false;
@@ -203,7 +205,7 @@ export const reviewGenerateRoutes = new Hono<ReviewEnv>().post(
         };
         const cost = modelCalls(chunks);
         let overBudget = false;
-        // An empty PR makes no model call, so it isn't charged.
+        // An empty or too-large PR makes no model call, so it isn't charged.
         if (model && cost > 0) {
           const user = String(req.viewer.id);
           // Check the user's own limit first, so a 429 doesn't spend the

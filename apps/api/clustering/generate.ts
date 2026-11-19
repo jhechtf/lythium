@@ -40,7 +40,9 @@ export const GRANULARITY: Record<
  * packed into chunks of at most `chunkFiles` files and `chunkChars`
  * characters, clustered in parallel (`concurrency` at a time), and the
  * chunks' groups are merged in one more call. If that would take more than
- * `maxChunks` chunks, excerpts are dropped and only paths and stats are sent.
+ * `maxChunks` chunks, excerpts are dropped and only paths and stats are sent;
+ * if that still doesn't fit (very long paths), the PR is grouped by directory
+ * (`too_large`). So a generation makes at most `maxChunks` + 1 model calls.
  */
 export const CLUSTER_LIMITS = {
   excerptLines: 40,
@@ -130,12 +132,18 @@ export function chunkFiles(prFiles: PRFile[]): ClusterFile[][] {
   return pack(files.map(({ excerpt: _, ...f }) => f));
 }
 
+/** More chunks than the model is sent: `generateGroups` uses directories. */
+const tooLarge = (chunks: ClusterFile[][]) =>
+  chunks.length > CLUSTER_LIMITS.maxChunks;
+
 /**
  * Model calls a generation over these chunks (from `chunkFiles`) makes: one
- * per chunk, plus a merge when there is more than one. Rate limits charge
- * this; pass the same chunks to `generateGroups` so the charge matches.
+ * per chunk, plus a merge when there is more than one, and none when there
+ * are too many to send. Rate limits charge this; pass the same chunks to
+ * `generateGroups` so the charge matches.
  */
 export function modelCalls(chunks: ClusterFile[][]): number {
+  if (tooLarge(chunks)) return 0;
   return chunks.length > 1 ? chunks.length + 1 : chunks.length;
 }
 
@@ -306,8 +314,8 @@ export function byDirectory(
 /**
  * Generate groups. `directory` never calls a model. `feature` and `layer`
  * use the clusterer, and fall back to directory grouping when there is no
- * clusterer (`not_configured`), it refuses (`refused`), or it fails
- * (`model_error`). The fallback reason is in the result so the UI can say so.
+ * clusterer (`not_configured`), the PR is too large to send (`too_large`),
+ * it refuses (`refused`), or it fails (`model_error`). The fallback reason is in the result so the UI can say so.
  */
 export async function generateGroups(
   input: GenerateInput,
@@ -319,9 +327,12 @@ export async function generateGroups(
     return byDirectory(input, null);
   }
   if (!clusterer) return byDirectory(input, 'not_configured');
+  const chunks = input.chunks ?? chunkFiles(input.files);
+  if (tooLarge(chunks)) return byDirectory(input, 'too_large');
   try {
     const drafts = await clusterWithModel(clusterer, {
       ...input,
+      chunks,
       strategy: input.strategy,
     });
     return {

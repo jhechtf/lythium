@@ -243,6 +243,30 @@ describe('generateGroups', () => {
     files: FILES,
   };
 
+  it('groups by directory, with no model call, when even paths alone take too many chunks', async () => {
+    const { clusterer, calls } = fakeClusterer();
+    // ~1000-char paths: about 60 per chunk without excerpts, so ~17 chunks.
+    const long = Array.from({ length: 1000 }, (_, i) =>
+      file(`${'d'.repeat(990)}/${i}.ts`),
+    );
+    const chunks = chunkFiles(long);
+    expect(chunks.length).toBeGreaterThan(CLUSTER_LIMITS.maxChunks);
+    expect(modelCalls(chunks)).toBe(0);
+    const out = await generateGroups(
+      { ...input, files: long, chunks },
+      clusterer,
+    );
+    expect(out).toMatchObject({
+      generatedBy: 'directory',
+      fallbackReason: 'too_large',
+    });
+    expect(calls.cluster).toHaveLength(0);
+    expectCover(
+      out.groups,
+      long.map((f) => f.path),
+    );
+  });
+
   it('uses one model call for a small PR', async () => {
     const { clusterer, calls } = fakeClusterer();
     const out = await generateGroups(input, clusterer);
