@@ -132,16 +132,18 @@ const MAX_PAGES = 10;
 
 /**
  * Fetch every page of a list endpoint (a full page means there may be more),
- * up to `MAX_PAGES` × 100 items.
+ * up to `maxPages` × 100 items (default `MAX_PAGES`). Pass `Infinity` when a
+ * missing item would give a wrong answer rather than an incomplete one.
  */
 export async function githubFetchAll<T>(
   path: string,
   token: string,
   pick: (data: unknown) => T[],
+  maxPages = MAX_PAGES,
 ): Promise<{ ok: true; items: T[] } | { ok: false; result: FetchResult }> {
   const sep = path.includes('?') ? '&' : '?';
   const items: T[] = [];
-  for (let page = 1; page <= MAX_PAGES; page++) {
+  for (let page = 1; page <= maxPages; page++) {
     const result = await githubFetch(
       `${path}${sep}per_page=${PAGE_SIZE}&page=${page}`,
       token,

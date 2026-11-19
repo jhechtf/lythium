@@ -77,7 +77,11 @@ function fakeReviewGithub(opts: FakeOptions = {}) {
       });
     }
     if (path === '/repos/o/r/pulls/7/reviews') {
-      return json(opts.reviews ?? []);
+      const perPage = Number(url.searchParams.get('per_page') ?? 30);
+      const page = Number(url.searchParams.get('page') ?? 1);
+      return json(
+        (opts.reviews ?? []).slice((page - 1) * perPage, page * perPage),
+      );
     }
     return new Response('not stubbed', { status: 404 });
   });
@@ -152,6 +156,23 @@ describe('POST …/reviews', () => {
         body: { event: 'COMMENT' },
       },
     ]);
+  });
+
+  it('finds a pending review past the first 1000 reviews', async () => {
+    const { posted } = fakeReviewGithub({
+      reviews: [
+        ...Array.from({ length: 1000 }, (_, i) => ({
+          id: i + 1,
+          state: 'COMMENTED',
+          user: { id: 555 },
+        })),
+        { id: 2000, state: 'PENDING', user: { id: REVIEWER } },
+      ],
+    });
+    const res = await submit({ event: 'COMMENT' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: 2000, fromPending: true });
+    expect(posted[0].path).toBe('/repos/o/r/pulls/7/reviews/2000/events');
   });
 
   it("ignores someone else's pending review", async () => {

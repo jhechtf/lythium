@@ -121,11 +121,14 @@ export const submitReviewRoutes = new Hono().post(
     const [resolved, viewer, reviews] = await Promise.all([
       resolvePR(token, owner, repo, Number(pr_number)),
       fetchViewer(token),
-      // Pending reviews are visible only to their author.
+      // Pending reviews are visible only to their author. Read every page:
+      // stopping early could miss the caller's pending review and create a
+      // second review instead of submitting the one holding their comments.
       githubFetchAll<GithubReviewSummary>(
         `${base}/pulls/${pr_number}/reviews`,
         token,
         (d) => (Array.isArray(d) ? d : []),
+        Number.POSITIVE_INFINITY,
       ),
     ]);
     if (!resolved.ok) return upstreamError(c, resolved, pr_number);
