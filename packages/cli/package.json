@@ -9,8 +9,11 @@
   "files": [
     "dist"
   ],
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
-    "build": "tsdown src/index.ts --format esm --target node20 --out-dir dist",
+    "build": "tsdown src/index.ts --format esm --target node24 --out-dir dist",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "node ./dist/cli.js",
     "check": "tsc --noEmit",
@@ -28,11 +31,11 @@
     "undici": "^6.0.0"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "tsdown": "^0.20.3",
-    "tsx": "^4.21.0",
-    "typescript": "^7.0.2",
-    "vitest": "^3.0.0"
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   },
   "imports": {
     "#package.json": "./package.json"

@@ -4,7 +4,7 @@ Guidance for Claude Code when working in `packages/cli`. See the repo-root `CLAU
 
 # What this is
 
-`@lythium/cli` — the `ly` command: an open-source, git-compatible stacked-diff workflow. Node 20, TypeScript, built with tsdown to `dist/index.mjs` (the `ly` bin).
+`@lythium/cli` — the `ly` command: an open-source, git-compatible stacked-diff workflow. Node 24, TypeScript, built with tsdown to `dist/index.mjs` (the `ly` bin).
 
 # Commands
 
