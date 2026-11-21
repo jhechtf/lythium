@@ -3,7 +3,7 @@
   "type": "module",
   "scripts": {
     "dev": "node main.ts",
-    "build": "tsdown main.ts",
+    "build": "tsdown",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
