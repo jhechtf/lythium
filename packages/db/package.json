@@ -18,10 +18,10 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.15",
-    "@types/node": "^24.0.0",
+    "@types/node": "catalog:",
     "drizzle-kit": "^0.31.10",
-    "typescript": "^7.0.2",
-    "vitest": "^3.2.4"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   },
   "packageManager": "pnpm@10.33.0"
 }

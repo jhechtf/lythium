@@ -7,18 +7,18 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@hono/node-server": "^1.13.7",
+    "@hono/node-server": "catalog:",
     "@lythium/db": "workspace:*",
     "@octokit/app": "^15.1.1",
     "dotenv": "^17.4.2",
-    "hono": "^4.11.10"
+    "hono": "catalog:"
   },
   "devDependencies": {
     "@octokit/webhooks": "^14.2.0",
-    "@types/node": "^24.0.0",
+    "@types/node": "catalog:",
     "smee-client": "^5.0.0",
-    "tsdown": "^0.12.5",
-    "tsx": "^4.19.4",
-    "typescript": "^7.0.2"
+    "tsdown": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:"
   }
 }
