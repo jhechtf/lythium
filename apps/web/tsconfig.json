@@ -11,5 +11,6 @@
     "strict": true,
     "moduleResolution": "bundler"
   }
-  // Path aliases: $lib is handled by SvelteKit; `#components/*` is a subpath import (package.json "imports").
+  // Path aliases are subpath imports declared in package.json "imports": `#lib/*` and `#components/*`
+  // (SvelteKit 3 no longer provides `$lib`).
 }

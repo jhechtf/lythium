@@ -16,7 +16,7 @@ permissions:
 env:
   TURBO_TELEMETRY_DISABLED: 1
   DO_NOT_TRACK: 1
-  # apps/web reads these via `$env/static/private`, so they must exist at
+  # apps/web reads these via `$app/env/private` (declared in `src/env.ts`), so they must exist at
   # build/check time. Placeholders only: CI never talks to GitHub or the API.
   GITHUB_APP_CLIENT_ID: ci-placeholder
   GITHUB_APP_CLIENT_SECRET: ci-placeholder
