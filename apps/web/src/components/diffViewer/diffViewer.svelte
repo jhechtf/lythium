@@ -1,8 +1,8 @@
 <script lang="ts">
 import { parse } from 'diff2html';
 import { ChevronDownIcon, ChevronUpIcon, MessageSquareIcon } from 'lucide-svelte';
-import Checkbox from '$components/checkbox/checkbox.svelte';
-import Expandable from '$components/expandable/expandable.svelte';
+import Checkbox from '#components/checkbox/checkbox.svelte';
+import Expandable from '#components/expandable/expandable.svelte';
 import 'diff2html/bundles/css/diff2html.min.css';
 import 'highlight.js/styles/github-dark.css';
 import type { DiffFile } from '@lythium/api/types';

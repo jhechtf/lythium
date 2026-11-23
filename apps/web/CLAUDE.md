@@ -8,7 +8,7 @@ The Lythium review UI: a SvelteKit app that renders a stacked PR diff for review
 
 Two experimental features are enabled and relied on:
 
-- **Async components** — `compilerOptions.experimental.async` in `svelte.config.js`; `+page.server.ts` load functions return promises straight through to `{#await}` in markup.
+- **Async components** — `compilerOptions.experimental.async` in the `sveltekit(...)` options in `vite.config.ts`; `+page.server.ts` load functions return promises straight through to `{#await}` in markup.
 - **SvelteKit remote functions** — `kit.experimental.remoteFunctions`.
 
 Prefer the `svelte5-sveltekit-expert` agent for non-trivial Svelte/SvelteKit work.
@@ -26,7 +26,7 @@ Also run `pnpm biome ci` from the repo root. `apps/web` has its own `biome.json`
 
 # Auth flow
 
-GitHub OAuth via `octokit`'s `OAuthApp` (`src/lib/server/octokit.ts`), configured from `$env/static/private`:
+GitHub OAuth via `octokit`'s `OAuthApp` (`src/lib/server/octokit.ts`), configured from `$app/env/private` (variables are declared in `src/env.ts`):
 `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`. The API base URL is `API_URL` (also private static).
 
 The user's access token lives in a `token` cookie. `src/hooks.server.ts` reads it on **every** request and constructs a per-request `Octokit` on `event.locals.octokit` (typed in `src/app.d.ts`). Server load functions use either `locals.octokit` (for GitHub calls) or read the `token` cookie directly to call the Lythium API with a `Bearer` header.
@@ -46,7 +46,7 @@ Some route files (`/+page.server.ts`, `/auth/github/callback`) are still scaffol
 - `<name>.stories.svelte` — Storybook story (`@storybook/addon-svelte-csf`)
 - `<name>.svelte.ts` — rune-based logic / shared reactive state where the component needs it
 
-Import components via the `$components` alias (e.g. `$components/toast/toastPortal.svelte`). `$lib` is the standard SvelteKit alias.
+Import components via the `#components/*` subpath import (e.g. `#components/toast/toastPortal.svelte`) and shared code via `#lib/*`. Both are declared in `package.json` `imports`; SvelteKit 3 no longer provides `$lib`.
 
 Shared reactive singletons follow a "module-level rune container" pattern — e.g. `command/command.svelte.ts` exports a `CommandRegistry` backed by `SvelteMap` + `$derived`; `toast/toastState.svelte.ts` exports a `SvelteSet` of toasts with a `registerToast` that returns a disposer. New global UI state should follow the same shape.
 

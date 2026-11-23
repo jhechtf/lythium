@@ -1,6 +1,6 @@
-import { page } from '@vitest/browser/context';
 import type { ComponentProps } from 'svelte';
 import { describe, expect, it } from 'vitest';
+import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import Page from './+page.svelte';
 

@@ -1,6 +1,6 @@
 import type { StackDiffResponse } from '@lythium/api/types';
 import { error } from '@sveltejs/kit';
-import { API_URL } from '$env/static/private';
+import { API_URL } from '$app/env/private';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params, cookies }) => {

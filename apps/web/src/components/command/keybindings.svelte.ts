@@ -1,4 +1,4 @@
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 /**
  *
  * @param keybind Should turn generic keybindings into platform specific keybindings.
