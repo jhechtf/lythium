@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
-import { dev } from '$app/environment';
-import { GITHUB_APP_CLIENT_ID } from '$env/static/private';
+import { dev } from '$app/env';
+import { GITHUB_APP_CLIENT_ID } from '$app/env/private';
 import {
   buildAuthorizeUrl,
   cookieOptions,
@@ -9,7 +9,7 @@ import {
   RETURN_COOKIE,
   STATE_COOKIE,
   safeRedirectPath,
-} from '$lib/server/oauth';
+} from '#lib/server/oauth.ts';
 
 export const GET = ({ url, cookies }) => {
   const state = createState();
