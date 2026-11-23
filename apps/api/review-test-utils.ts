@@ -7,11 +7,13 @@ import { vi } from 'vitest';
 
 export const SHA = 'a'.repeat(40);
 export const NEW_SHA = 'b'.repeat(40);
+export const BASE_SHA = 'c'.repeat(40);
 export const AUTHOR = 1;
 export const REVIEWER = 2;
 
 export interface FakeGithub {
   headSha: string;
+  baseSha: string;
   authorId: number;
   /** Viewer id per token. */
   viewers: Record<string, number>;
@@ -25,6 +27,7 @@ export interface FakeGithub {
 export function fakeGithub(overrides: Partial<FakeGithub> = {}) {
   const gh: FakeGithub = {
     headSha: SHA,
+    baseSha: BASE_SHA,
     authorId: AUTHOR,
     viewers: { author: AUTHOR, reviewer: REVIEWER },
     pushers: [],
@@ -72,6 +75,7 @@ export function fakeGithub(overrides: Partial<FakeGithub> = {}) {
         user: { id: gh.authorId },
         changed_files: gh.files.length,
         base: {
+          sha: gh.baseSha,
           repo: { permissions: { push: gh.pushers.includes(token) } },
         },
       });

@@ -1,6 +1,6 @@
 {
   "devDependencies": {
-    "@biomejs/biome": "^2.4.4",
+    "@biomejs/biome": "catalog:",
     "@changesets/cli": "^2.29.7",
     "turbo": "^2.9.6"
   },

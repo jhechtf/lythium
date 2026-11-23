@@ -12,8 +12,6 @@ import {
   updateGroup,
 } from '@lythium/db';
 import { type Context, Hono } from 'hono';
-import { bodyLimit } from 'hono/body-limit';
-import { createMiddleware } from 'hono/factory';
 import { upstreamError } from './github.ts';
 import {
   checkFilesInPR,
@@ -30,7 +28,13 @@ import {
   resolvePR,
   type Viewer,
 } from './review-context.ts';
-import { bearerToken, repoParams, unsupportedSource } from './route-params.ts';
+import {
+  bearerToken,
+  beforeBodyChecks,
+  jsonBody,
+  repoParams,
+  unsupportedSource,
+} from './route-params.ts';
 import type {
   ReviewGroup,
   ReviewGroupSource,
@@ -45,6 +49,9 @@ import type {
  */
 
 export type ReviewEnv = { Variables: { reviewDb: ReviewDb } };
+
+/** Extra tries when the PR's head moves during a files lookup. */
+const MAX_HEAD_RETRIES = 2;
 
 export interface GuidedRequest {
   db: ReviewDb;
@@ -72,20 +79,39 @@ export async function guidedRequest(
   const { owner, repo, pr_number } = params;
   const n = Number(pr_number);
 
-  const resolving = resolvePR(auth.token, owner, repo, n);
-  const [resolved, viewer, files] = await Promise.all([
-    resolving,
-    fetchViewer(auth.token),
-    opts.files
-      ? fetchPRFiles(
-          auth.token,
-          owner,
-          repo,
-          n,
-          resolving.then((r) => (r.ok ? r.changedFiles : null)),
-        )
-      : null,
-  ]);
+  const lookup = async () => {
+    const resolving = resolvePR(auth.token, owner, repo, n);
+    return Promise.all([
+      resolving,
+      opts.files
+        ? fetchPRFiles(
+            auth.token,
+            owner,
+            repo,
+            n,
+            resolving.then((r) => (r.ok ? r.changedFiles : null)),
+          )
+        : null,
+    ]);
+  };
+  const viewerLookup = fetchViewer(auth.token);
+  let [resolved, files] = await lookup();
+  // The files API reads the PR's current head and doesn't say which it was,
+  // so a push between it and `resolvePR` would pair one head's files with
+  // another's marks. Read the head again afterwards; if it moved, look both
+  // up again, and give up with a 409 if the PR keeps moving.
+  for (let retry = 0; files?.ok && resolved.ok; retry++) {
+    const after = await resolvePR(auth.token, owner, repo, n);
+    if (!after.ok) return { error: upstreamError(c, after, pr_number) };
+    if (after.pr.headSha === resolved.pr.headSha) break;
+    if (retry >= MAX_HEAD_RETRIES) {
+      return {
+        error: c.json({ error: 'The PR changed while loading; retry' }, 409),
+      };
+    }
+    [resolved, files] = await lookup();
+  }
+  const viewer = await viewerLookup;
   if (!resolved.ok) return { error: upstreamError(c, resolved, pr_number) };
   if (!viewer.ok) return { error: upstreamError(c, viewer, pr_number) };
   if (files && !files.ok) return { error: upstreamError(c, files, pr_number) };
@@ -96,6 +122,38 @@ export async function guidedRequest(
     prFiles: files?.files ?? [],
     prNumber: pr_number,
   };
+}
+
+/**
+ * The PR's files, for a route that called `guidedRequest` without them and
+ * only sometimes needs them. Like `guidedRequest`, reads the head again
+ * afterwards; if it moved from `req`'s, answers 409, since the caller has
+ * already keyed its work to that head.
+ */
+export async function filesAtHead(
+  c: Context<ReviewEnv>,
+  req: GuidedRequest,
+): Promise<PRFile[] | Response> {
+  const auth = bearerToken(c);
+  if (auth.error) return auth.error;
+  const params = repoParams(c);
+  if (params.error) return params.error;
+  const { owner, repo, pr_number } = params;
+  const n = Number(pr_number);
+  const files = await fetchPRFiles(
+    auth.token,
+    owner,
+    repo,
+    n,
+    req.resolved.changedFiles,
+  );
+  if (!files.ok) return upstreamError(c, files, pr_number);
+  const after = await resolvePR(auth.token, owner, repo, n);
+  if (!after.ok) return upstreamError(c, after, pr_number);
+  if (after.pr.headSha !== req.resolved.pr.headSha) {
+    return c.json({ error: 'The PR changed while loading; retry' }, 409);
+  }
+  return files.files;
 }
 
 /** Data-layer errors → responses: bad input 400, stale head 409. */
@@ -110,7 +168,7 @@ export function stateError(c: Context, err: unknown): Response {
 }
 
 /** The PR as editable by this caller, or a 403 response. */
-function requireEditable(
+export function requireEditable(
   c: Context,
   req: GuidedRequest,
 ): EditablePR | Response {
@@ -131,7 +189,7 @@ function requireEditable(
 // through `stateError` like the data layer's own checks.
 // ---------------------------------------------------------------------------
 
-const isObject = (v: unknown): v is Record<string, unknown> =>
+export const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 const optionalLine = (v: unknown, field: string) => {
@@ -213,53 +271,31 @@ function parseReplace(v: unknown): {
 }
 
 /**
- * Cheap checks for write routes, before the body is read: source, token and
- * params. A caller without a token can't make the API buffer a body.
- * `guidedRequest` repeats them later; they're pure and cost nothing.
+ * Middleware every guided-review write route runs before its handler reads
+ * the body. Body caps are sized to what the input caps allow: up to 1 kB per
+ * path, plus names and descriptions. `PUT` (10k entries) and `PATCH` (files +
+ * addFiles + removeFiles, 3000 each) need ~10 MB; `POST` (one group, 3000
+ * files) needs ~3 MB.
  */
-const checkRequest = createMiddleware(async (c, next) => {
-  const badSource = unsupportedSource(c, c.req.param('source') ?? '');
-  if (badSource) return badSource;
-  const auth = bearerToken(c);
-  if (auth.error) return auth.error;
-  const params = repoParams(c);
-  if (params.error) return params.error;
-  await next();
-});
+export const beforeBody = (mb: number) =>
+  [requireReviewDb, ...beforeBodyChecks(mb)] as const;
+
+/** Largest value of a Postgres `serial` (int4) id. */
+const MAX_GROUP_ID = 2_147_483_647;
 
 /**
- * Cap a write's body before it is buffered and parsed, sized to what the
- * input caps allow: up to 1 kB per path, plus names and descriptions.
- * `PUT` (10k entries) and `PATCH` (files + addFiles + removeFiles, 3000 each)
- * need ~10 MB; `POST` (one group, 3000 files) needs ~3 MB.
+ * The `:group_id` param as a number, or null when it can't be a group id.
+ * Ids past the `serial` range are rejected here: the database would throw on
+ * the comparison instead of finding nothing, and that would be a 500.
  */
-const limitBody = (mb: number) =>
-  bodyLimit({
-    maxSize: mb * 1024 * 1024,
-    onError: (c) => c.json({ error: 'Request body too large' }, 413),
-  });
-
-/** Middleware every write route runs before its handler reads the body. */
-const beforeBody = (mb: number) =>
-  [requireReviewDb, checkRequest, limitBody(mb)] as const;
-
-/**
- * The JSON body, or undefined when it isn't JSON (parsers then answer 400).
- * A body that streams past `bodyLimit` (no Content-Length) fails while being
- * read; that error is rethrown so `bodyLimit` answers 413.
- */
-const jsonBody = (c: Context) =>
-  c.req.json().catch((err: unknown) => {
-    if (err instanceof Error && err.name === 'BodyLimitError') throw err;
-    return undefined;
-  });
-
-function groupId(c: Context): number | null {
+export function groupId(c: Context): number | null {
   const id = c.req.param('group_id') ?? '';
-  return /^[1-9]\d{0,9}$/.test(id) ? Number(id) : null;
+  if (!/^[1-9]\d{0,9}$/.test(id)) return null;
+  const n = Number(id);
+  return n <= MAX_GROUP_ID ? n : null;
 }
 
-const groupNotFound = (c: Context, id: string | number) =>
+export const groupNotFound = (c: Context, id: string | number) =>
   c.json({ error: `Group ${id} not found` }, 404);
 
 /** A group entry referenced a file the PR doesn't change: 400. */

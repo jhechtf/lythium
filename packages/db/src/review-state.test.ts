@@ -16,6 +16,7 @@ import {
   reorderGroups,
   replaceGroups,
   StaleHeadError,
+  setFilesViewed,
   setFileViewed,
   setGroupReviewed,
   updateGroup,
@@ -317,6 +318,38 @@ describe('review state', () => {
         viewedFiles: [],
       });
     });
+    it('marks and unmarks several files at once', async () => {
+      await setFilesViewed(db, PR, ALICE, ['a.ts', 'b.ts', 'a.ts'], true);
+      await setFilesViewed(db, PR, ALICE, ['b.ts', 'c.ts'], true);
+      expect((await getProgress(db, PR, ALICE)).viewedFiles).toEqual([
+        'a.ts',
+        'b.ts',
+        'c.ts',
+      ]);
+      await setFilesViewed(db, PR, ALICE, ['a.ts', 'zzz.ts'], false);
+      expect((await getProgress(db, PR, ALICE)).viewedFiles).toEqual([
+        'b.ts',
+        'c.ts',
+      ]);
+      expect((await getProgress(db, PR, BOB)).viewedFiles).toEqual([]);
+    });
+
+    it('rolls back a batch that would pass the viewed cap', async () => {
+      const many = Array.from(
+        { length: REVIEW_LIMITS.viewedFilesPerUser },
+        (_, i) => `f${i}.ts`,
+      );
+      await setFilesViewed(db, PR, ALICE, many, true);
+      await expect(
+        setFilesViewed(db, PR, ALICE, ['x.ts', 'y.ts'], true),
+      ).rejects.toBeInstanceOf(ReviewStateError);
+      expect((await getProgress(db, PR, ALICE)).viewedFiles).toHaveLength(
+        REVIEW_LIMITS.viewedFilesPerUser,
+      );
+      await expect(
+        setFilesViewed(db, PR, ALICE, [...many, 'x.ts'], true),
+      ).rejects.toBeInstanceOf(ReviewStateError);
+    });
   });
 
   describe('a new push (head sha changes)', () => {
@@ -413,6 +446,25 @@ describe('review state', () => {
         1,
       );
       expect(await listGroups(db, PR)).toEqual([]);
+    });
+
+    // A/T1 recorded; a request reads B/T2 and stalls; a force-push back to A
+    // is read at T3 by an empty viewed-files batch. That batch must still
+    // record T3, so the stalled B/T2 write can't take over and wipe A.
+    it('records the head even for an empty viewed-files batch', async () => {
+      await createGroup(db, PR, { name: 'keep', files: [] }, ALICE);
+      const T3 = new Date('2026-11-15T10:02:00Z');
+      await setFilesViewed(
+        db,
+        verifiedPR({ ...PR, observedAt: T3 }),
+        ALICE,
+        [],
+        true,
+      );
+      await expect(
+        createGroup(db, PR_PUSHED, { name: 'late', files: [] }, BOB),
+      ).rejects.toBeInstanceOf(StaleHeadError);
+      expect((await listGroups(db, PR)).map((g) => g.name)).toEqual(['keep']);
     });
 
     it('lets an older observation of the same sha through', async () => {

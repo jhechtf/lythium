@@ -157,6 +157,54 @@ export interface PRDetailsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Submitting a review (LYT-57)
+// ---------------------------------------------------------------------------
+
+export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+
+/** `POST …/reviews`: the "Finish Review" button. */
+export interface SubmitReviewRequest {
+  event: ReviewEvent;
+  /** Summary comment. Required for REQUEST_CHANGES and COMMENT unless a pending review holds comments. */
+  body?: string;
+  /**
+   * The head sha the reviewer looked at. When the PR has moved on since,
+   * the API answers 409 (`stale_head`) instead of reviewing code the reviewer
+   * hasn't seen; resend without it to review the current head anyway.
+   */
+  commitId?: string;
+}
+
+export interface SubmitReviewResponse {
+  id: number;
+  /** GitHub's review state, e.g. `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`. */
+  state: string;
+  body: string | null;
+  /** The commit the review applies to. */
+  commitId: string | null;
+  htmlUrl: string | null;
+  submittedAt: string | null;
+  /** True when this submitted the caller's pending review (with its comments). */
+  fromPending: boolean;
+}
+
+/**
+ * `code` on a failed submit, next to `error`:
+ * - `own_pr` (422): the author can't approve or request changes on their own PR
+ * - `body_required` (400): REQUEST_CHANGES and COMMENT need a summary
+ * - `stale_head` (409): `commitId` isn't the PR's head (`headSha` is), or the
+ *   caller's pending review is on an older commit (`pendingCommitId`) and the
+ *   event isn't COMMENT. A pending review can't be moved to a new commit, so
+ *   only a comment review can publish it.
+ * - `rejected` (422): GitHub refused the review; `error` is its reason
+ */
+export type SubmitReviewErrorCode =
+  | 'own_pr'
+  | 'body_required'
+  | 'stale_head'
+  | 'rejected';
+
+// ---------------------------------------------------------------------------
 // Guided review: groups (LYT-61)
 // ---------------------------------------------------------------------------
 
@@ -226,4 +274,102 @@ export interface ReplaceReviewGroupsRequest {
   groups: CreateReviewGroupRequest[];
   /** Defaults to `manual`; send `ai` when accepting a generated preview. */
   source?: ReviewGroupSource;
+}
+
+// ---------------------------------------------------------------------------
+// Guided review: progress (LYT-62). Private to the caller, reset by a push.
+// ---------------------------------------------------------------------------
+
+/** `GET …/progress`: "3 of 7 groups reviewed", "4 of 12 viewed". */
+export interface ReviewProgressResponse {
+  /** Progress belongs to this head sha; a push starts over. */
+  headSha: string;
+  groups: {
+    total: number;
+    reviewed: number;
+    /** Ascending. */
+    reviewedIds: number[];
+  };
+  files: {
+    /** Files the PR changes. */
+    total: number;
+    /** Viewed files that are still in the PR. */
+    viewed: number;
+    /** Sorted. */
+    viewedPaths: string[];
+  };
+}
+
+/** `PUT …/groups/:id/reviewed`. */
+export interface SetGroupReviewedRequest {
+  reviewed: boolean;
+}
+
+/** `PUT …/files/viewed`. */
+export interface SetFilesViewedRequest {
+  paths: string[];
+  viewed: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Guided review: AI clustering (LYT-63). A preview; nothing is saved until
+// the client sends the groups to `PUT …/groups` with `source: 'ai'`.
+// ---------------------------------------------------------------------------
+
+/**
+ * `feature`: by user-facing change, across layers. `layer`: data → API → UI
+ * → tests → docs/config. `directory`: by path, no model call.
+ */
+export type ClusterStrategy = 'feature' | 'layer' | 'directory';
+
+/** Target group count: coarse 2–4, balanced 4–6, fine 6–10 (a hint to the model). */
+export type ClusterGranularity = 'coarse' | 'balanced' | 'fine';
+
+/** Why the result came from directory grouping instead of the model. */
+export type GenerateFallbackReason =
+  | 'not_configured'
+  | 'refused'
+  | 'model_error'
+  /** The instance's model-call budget is used up for now. */
+  | 'rate_limited'
+  /** Too many files to send in `maxChunks` chunks, even without excerpts. */
+  | 'too_large';
+
+/** `POST …/groups/generate`. */
+export interface GenerateGroupsRequest {
+  strategy: ClusterStrategy;
+  /** Defaults to `balanced`. */
+  granularity?: ClusterGranularity;
+  /** Skip the cached preview for these settings and generate a new one. */
+  regenerate?: boolean;
+}
+
+export interface GeneratedGroup {
+  name: string;
+  description: string | null;
+  /** Whole files; together the groups cover every changed file exactly once. */
+  files: string[];
+  /**
+   * 0–100. From the model: its estimate that every file belongs under the
+   * group's name. From directory grouping: 100 for a single directory, and
+   * for the "Other changes" catch-all the share of its files in its most
+   * common top-level directory. "Unsorted files" (files the model didn't
+   * place) is 0.
+   */
+  confidence: number;
+}
+
+export interface GenerateGroupsResponse {
+  /** The preview is for this head sha; accept it before the next push. */
+  headSha: string;
+  strategy: ClusterStrategy;
+  granularity: ClusterGranularity;
+  groups: GeneratedGroup[];
+  generatedBy: 'model' | 'directory';
+  /** Model id when `generatedBy` is `model`. */
+  model: string | null;
+  /** Set when a `feature`/`layer` request fell back to directory grouping. */
+  fallbackReason: GenerateFallbackReason | null;
+  /** True when this is a stored preview for the same head sha and settings. */
+  cached: boolean;
 }

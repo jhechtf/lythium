@@ -767,65 +767,82 @@ export async function setGroupReviewed(
 }
 
 /** Mark or unmark a file viewed for one user at the PR's head sha. */
-export async function setFileViewed(
+export function setFileViewed(
   db: ReviewDb,
   pr: VerifiedPR,
   userId: number,
   path: string,
   viewed: boolean,
 ): Promise<void> {
-  checkPath(path);
+  return setFilesViewed(db, pr, userId, [path], viewed);
+}
+
+/**
+ * Mark or unmark several files viewed for one user at the PR's head sha, in
+ * one transaction (e.g. "mark folder as viewed"). Marking an already viewed
+ * file, or unmarking one that isn't, is a no-op.
+ */
+export async function setFilesViewed(
+  db: ReviewDb,
+  pr: VerifiedPR,
+  userId: number,
+  paths: string[],
+  viewed: boolean,
+): Promise<void> {
+  if (!Array.isArray(paths)) throw new ReviewStateError('paths must be a list');
+  if (paths.length > REVIEW_LIMITS.viewedFilesPerUser) {
+    throw new ReviewStateError(
+      `At most ${REVIEW_LIMITS.viewedFilesPerUser} files per call`,
+    );
+  }
+  for (const path of paths) checkPath(path);
+  const unique = [...new Set(paths)];
+
   await db.transaction(async (tx) => {
+    // Even an empty batch records the head it observed, so an older
+    // observation that arrives later is rejected instead of winning.
     await beginWrite(tx, pr);
-    const key = {
-      owner: pr.owner,
-      repo: pr.repo,
-      prNumber: pr.prNumber,
-      headSha: pr.headSha,
-      userId,
-      path,
-    };
-    if (viewed) {
-      const inserted = await tx
-        .insert(reviewViewedFiles)
-        .values(key)
-        .onConflictDoNothing()
-        .returning({ id: reviewViewedFiles.path });
-      // Only a new mark can push the user over the cap; re-marking a file
-      // that's already viewed stays fine at the limit. The PR is locked, so
-      // this count can't race another write. Throwing rolls the insert back.
-      if (inserted.length > 0) {
-        const [{ count }] = await tx
-          .select({ count: sql<number>`count(*)::int` })
-          .from(reviewViewedFiles)
-          .where(
-            and(
-              eq(reviewViewedFiles.owner, key.owner),
-              eq(reviewViewedFiles.repo, key.repo),
-              eq(reviewViewedFiles.prNumber, key.prNumber),
-              eq(reviewViewedFiles.headSha, key.headSha),
-              eq(reviewViewedFiles.userId, key.userId),
-            ),
-          );
-        if (count > REVIEW_LIMITS.viewedFilesPerUser) {
-          throw new ReviewStateError(
-            `At most ${REVIEW_LIMITS.viewedFilesPerUser} files can be marked viewed per PR`,
-          );
-        }
-      }
-    } else {
+    if (unique.length === 0) return;
+    const userAtHead = and(
+      eq(reviewViewedFiles.owner, pr.owner),
+      eq(reviewViewedFiles.repo, pr.repo),
+      eq(reviewViewedFiles.prNumber, pr.prNumber),
+      eq(reviewViewedFiles.headSha, pr.headSha),
+      eq(reviewViewedFiles.userId, userId),
+    );
+    if (!viewed) {
       await tx
         .delete(reviewViewedFiles)
-        .where(
-          and(
-            eq(reviewViewedFiles.owner, key.owner),
-            eq(reviewViewedFiles.repo, key.repo),
-            eq(reviewViewedFiles.prNumber, key.prNumber),
-            eq(reviewViewedFiles.headSha, key.headSha),
-            eq(reviewViewedFiles.userId, key.userId),
-            eq(reviewViewedFiles.path, key.path),
-          ),
+        .where(and(userAtHead, inArray(reviewViewedFiles.path, unique)));
+      return;
+    }
+    const inserted = await tx
+      .insert(reviewViewedFiles)
+      .values(
+        unique.map((path) => ({
+          owner: pr.owner,
+          repo: pr.repo,
+          prNumber: pr.prNumber,
+          headSha: pr.headSha,
+          userId,
+          path,
+        })),
+      )
+      .onConflictDoNothing()
+      .returning({ path: reviewViewedFiles.path });
+    // Only new marks can push the user over the cap; re-marking files that
+    // are already viewed stays fine at the limit. The PR is locked, so this
+    // count can't race another write. Throwing rolls the inserts back.
+    if (inserted.length > 0) {
+      const [{ count }] = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(reviewViewedFiles)
+        .where(userAtHead);
+      if (count > REVIEW_LIMITS.viewedFilesPerUser) {
+        throw new ReviewStateError(
+          `At most ${REVIEW_LIMITS.viewedFilesPerUser} files can be marked viewed per PR`,
         );
+      }
     }
   });
 }

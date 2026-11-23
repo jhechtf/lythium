@@ -127,15 +127,26 @@ export interface ResolvedPR {
   authorId: number | null;
   /** The caller has push (or maintain/admin) access to the base repo. */
   canPush: boolean;
+  /**
+   * The base commit GitHub compares the head against. Retargeting a PR (say
+   * from its parent branch to main) changes its files without a new head.
+   */
+  baseSha: string | null;
   /** GitHub's `changed_files` count, used to page the files list in parallel. */
   changedFiles: number | null;
+  /** PR title and description, for AI clustering's context. */
+  title: string;
+  body: string | null;
 }
 
 interface GithubPRAccess {
+  title?: unknown;
+  body?: unknown;
   head?: { sha?: unknown };
   changed_files?: unknown;
   user?: { id?: unknown } | null;
   base?: {
+    sha?: unknown;
     repo?: {
       permissions?: { push?: unknown; maintain?: unknown; admin?: unknown };
     };
@@ -170,14 +181,21 @@ export async function resolvePR(
   // `permissions` is only present for authenticated requests; absent → false.
   const perms = data?.base?.repo?.permissions;
   const authorId = data?.user?.id;
+  const baseSha = data?.base?.sha;
   return {
     ok: true,
     pr: verifiedPR({ owner, repo, prNumber, headSha }),
     authorId: typeof authorId === 'number' ? authorId : null,
     canPush:
       perms?.push === true || perms?.maintain === true || perms?.admin === true,
+    baseSha:
+      typeof baseSha === 'string' && /^[0-9a-f]{40}$/i.test(baseSha)
+        ? baseSha
+        : null,
     changedFiles:
       typeof data?.changed_files === 'number' ? data.changed_files : null,
+    title: typeof data?.title === 'string' ? data.title : '',
+    body: typeof data?.body === 'string' ? data.body : null,
   };
 }
 
