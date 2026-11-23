@@ -8,7 +8,7 @@ The Lythium review UI: a SvelteKit app that renders a stacked PR diff for review
 
 Two experimental features are enabled and relied on:
 
-- **Async components** — `compilerOptions.experimental.async` in `svelte.config.js`; `+page.server.ts` load functions return promises straight through to `{#await}` in markup.
+- **Async components** — `compilerOptions.experimental.async` in the `sveltekit(...)` options in `vite.config.ts`; `+page.server.ts` load functions return promises straight through to `{#await}` in markup.
 - **SvelteKit remote functions** — `kit.experimental.remoteFunctions`.
 
 Prefer the `svelte5-sveltekit-expert` agent for non-trivial Svelte/SvelteKit work.

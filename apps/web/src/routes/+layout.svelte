@@ -1,7 +1,7 @@
 <script lang="ts">
 import '../app.css';
-import ToastPortal from '$components/toast/toastPortal.svelte';
-import favicon from '$lib/assets/favicon.svg';
+import ToastPortal from '#components/toast/toastPortal.svelte';
+import favicon from '#lib/assets/favicon.svg';
 import Command from '../components/command/command.svelte';
 import Rail from '../components/rail/rail.svelte';
 
