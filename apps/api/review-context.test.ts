@@ -242,26 +242,29 @@ describe('resolvePR', () => {
     ['admin', { admin: true }, true],
     ['read only', { pull: true, push: false }, false],
     ['no permissions field', undefined, false],
-  ])('reads push access from the PR (%s)', async (_label, permissions, canPush) => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        async () =>
-          new Response(
-            JSON.stringify({
-              head: { sha: SHA },
-              user: { id: 9 },
-              base: { repo: { permissions } },
-            }),
-          ),
-      ),
-    );
-    expect(await resolvePR('t', 'o', 'r', 7)).toMatchObject({
-      ok: true,
-      authorId: 9,
-      canPush,
-    });
-  });
+  ])(
+    'reads push access from the PR (%s)',
+    async (_label, permissions, canPush) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                head: { sha: SHA },
+                user: { id: 9 },
+                base: { repo: { permissions } },
+              }),
+            ),
+        ),
+      );
+      expect(await resolvePR('t', 'o', 'r', 7)).toMatchObject({
+        ok: true,
+        authorId: 9,
+        canPush,
+      });
+    },
+  );
 });
 
 describe('editableBy', () => {

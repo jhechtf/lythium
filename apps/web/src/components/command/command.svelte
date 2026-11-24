@@ -71,7 +71,7 @@ export type CommandProps = {
 	</header>
 	<div id={id1} class="results max-h-1/2 overflow-auto" role="menu" tabindex="0">
 			{#each filteredResults as [command, info] (command)}
-				<div role="menuitem" aria-label={info.title}>
+				<div role="menuitem" tabindex="-1" aria-label={info.title}>
 					<header class="flex items-center justify-between">
 						{#if info.icon}
 							<info.icon />

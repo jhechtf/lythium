@@ -14,6 +14,7 @@ export type CheckboxProps = Omit<HTMLInputAttributes, 'type'> & {
 {/snippet}
 
 {#if children}
+  <!-- biome-ignore lint/a11y/noLabelWithoutControl: the input is rendered through the checkbox snippet inside this label -->
   <label class="inline-flex gap-2 items-center">
     {#if labelSide === 'start'}
       {@render children()}

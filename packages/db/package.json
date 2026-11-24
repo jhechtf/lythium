@@ -17,9 +17,9 @@
     "postgres": "^4.1.1"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.15",
+    "@electric-sql/pglite": "^0.5.17",
     "@types/node": "catalog:",
-    "drizzle-kit": "^0.31.10",
+    "drizzle-kit": "^0.31.11",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
