@@ -37,7 +37,7 @@
     "@vitest/browser-playwright": "^5.1.1",
     "globals": "^16.4.0",
     "playwright": "^1.65.1",
-    "storybook": "^10.6.8",
+    "storybook": "^9.1.21",
     "svelte": "^5.59.1",
     "svelte-check": "^4.7.8",
     "tailwindcss": "^4.3.5",
