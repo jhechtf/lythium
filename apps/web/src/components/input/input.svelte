@@ -15,6 +15,7 @@ export type InputProps = {
 {/snippet}
 
 {#if children}
+	<!-- biome-ignore lint/a11y/noLabelWithoutControl: the input is rendered through the input snippet inside this label -->
 	<label>
 		<span>{@render children()}</span>
 		{@render input()}

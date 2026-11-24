@@ -204,22 +204,22 @@ describe('POST …/reviews', () => {
         ],
       });
 
-    it.each([
-      'APPROVE',
-      'REQUEST_CHANGES',
-    ])('refuses %s, with or without commitId', async (event) => {
-      const { posted } = stale();
-      for (const commitId of [undefined, SHA]) {
-        const res = await submit({ event, body: 'x', commitId });
-        expect(res.status).toBe(409);
-        expect(await res.json()).toMatchObject({
-          code: 'stale_head',
-          headSha: SHA,
-          pendingCommitId: OLD,
-        });
-      }
-      expect(posted).toEqual([]);
-    });
+    it.each(['APPROVE', 'REQUEST_CHANGES'])(
+      'refuses %s, with or without commitId',
+      async (event) => {
+        const { posted } = stale();
+        for (const commitId of [undefined, SHA]) {
+          const res = await submit({ event, body: 'x', commitId });
+          expect(res.status).toBe(409);
+          expect(await res.json()).toMatchObject({
+            code: 'stale_head',
+            headSha: SHA,
+            pendingCommitId: OLD,
+          });
+        }
+        expect(posted).toEqual([]);
+      },
+    );
 
     it('can still be published as a comment review', async () => {
       const { posted } = stale();
@@ -238,16 +238,16 @@ describe('POST …/reviews', () => {
     });
   });
 
-  it.each([
-    'APPROVE',
-    'REQUEST_CHANGES',
-  ])('refuses %s from the PR author without calling GitHub', async (event) => {
-    const { posted } = fakeReviewGithub();
-    const res = await submit({ event, body: 'x' }, 'author');
-    expect(res.status).toBe(422);
-    expect(await res.json()).toMatchObject({ code: 'own_pr' });
-    expect(posted).toEqual([]);
-  });
+  it.each(['APPROVE', 'REQUEST_CHANGES'])(
+    'refuses %s from the PR author without calling GitHub',
+    async (event) => {
+      const { posted } = fakeReviewGithub();
+      const res = await submit({ event, body: 'x' }, 'author');
+      expect(res.status).toBe(422);
+      expect(await res.json()).toMatchObject({ code: 'own_pr' });
+      expect(posted).toEqual([]);
+    },
+  );
 
   it('lets the author leave a comment review', async () => {
     fakeReviewGithub();
@@ -255,16 +255,16 @@ describe('POST …/reviews', () => {
     expect(res.status).toBe(200);
   });
 
-  it.each([
-    'REQUEST_CHANGES',
-    'COMMENT',
-  ])('requires a summary for %s without a pending review', async (event) => {
-    const { posted } = fakeReviewGithub();
-    const res = await submit({ event });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ code: 'body_required' });
-    expect(posted).toEqual([]);
-  });
+  it.each(['REQUEST_CHANGES', 'COMMENT'])(
+    'requires a summary for %s without a pending review',
+    async (event) => {
+      const { posted } = fakeReviewGithub();
+      const res = await submit({ event });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ code: 'body_required' });
+      expect(posted).toEqual([]);
+    },
+  );
 
   it('answers 409 when the PR moved past the reviewed commit', async () => {
     const { posted } = fakeReviewGithub();

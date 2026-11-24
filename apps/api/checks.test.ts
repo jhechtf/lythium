@@ -362,12 +362,15 @@ describe('GET /repos/:source/:owner/:repo/pr/:pr_number/checks', () => {
     // The URL parser resolves `..` (also `%2E%2E`) before routing, so these
     // never match the route; the handler's name check is a second layer.
     ['/repos/github/%2E%2E/r/pr/7/checks', 404],
-  ] as const)('rejects %s with %i and never calls GitHub', async (path, status) => {
-    const calls = stubGithub({});
-    const res = await get(undefined, path);
-    expect(res.status).toBe(status);
-    expect(calls).toEqual([]);
-  });
+  ] as const)(
+    'rejects %s with %i and never calls GitHub',
+    async (path, status) => {
+      const calls = stubGithub({});
+      const res = await get(undefined, path);
+      expect(res.status).toBe(status);
+      expect(calls).toEqual([]);
+    },
+  );
 
   it.each([
     ['the PR lookup', '/pulls/7'],
