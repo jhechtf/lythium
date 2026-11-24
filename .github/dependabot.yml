@@ -14,7 +14,8 @@ updates:
         update-types: [minor, patch]
       # Majors get their own PR per package: they need a human look.
     ignore:
-      # apps/web: svelte-kit needs the JS compiler API, which TypeScript 7 lacks.
+      # apps/web must stay on TS 6 (svelte-kit needs the JS compiler API, which TS 7 lacks).
+      # Node packages already use 7 via the catalog. Revisit when svelte-kit supports TS 7.
       - dependency-name: typescript
         update-types: ['version-update:semver-major']
 
