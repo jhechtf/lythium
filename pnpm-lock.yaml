@@ -227,8 +227,8 @@ importers:
         specifier: ^1.0.1
         version: 1.0.1
       commander:
-        specifier: ^11.1.0
-        version: 11.1.0
+        specifier: ^15.1.0
+        version: 15.1.0
       conf:
         specifier: ^16.0.0
         version: 16.0.0
@@ -2606,9 +2606,9 @@ packages:
     resolution: {integrity: sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==}
     engines: {node: '>=6'}
 
-  commander@11.1.0:
-    resolution: {integrity: sha512-yPVavfyCcRhmorC7rWlkHn15b4wDVgVmBA7kV4QVBsF7kv/9TKJAbAXVTxvTnwP8HHKjRCJDClKbciiYS7p0DQ==}
-    engines: {node: '>=16'}
+  commander@15.1.0:
+    resolution: {integrity: sha512-cgnQ88TRrWcC7pVq46RzJVRMktu3W2RcbnoidnfBsl1bmDCBwJS/udcIZpKoCrbAYYaCqsz1yZCVIgbIaU3ddQ==}
+    engines: {node: '>=22.12.0'}
 
   conf@16.0.0:
     resolution: {integrity: sha512-CwqpY9jSpU6uYeObCwfRGqiEsd/DnU7rruwiFNapZPsOB8p2U65p+MzccEsdvg+KLis1Y1d1Mo3rKkTTzWONSA==}
@@ -5732,7 +5732,7 @@ snapshots:
 
   clsx@2.1.1: {}
 
-  commander@11.1.0: {}
+  commander@15.1.0: {}
 
   conf@16.0.0:
     dependencies:
