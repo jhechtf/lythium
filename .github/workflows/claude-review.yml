@@ -34,7 +34,7 @@ jobs:
       before_ids: ${{ steps.before.outputs.ids }}
       review_output: ${{ steps.claude.outputs.structured_output }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -42,7 +42,7 @@ jobs:
       # The review rules come from the base branch, never from the PR: a PR
       # that edits CLAUDE.md must not get to rewrite its own reviewer's rules.
       - name: Check out the base branch for the review rules
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: .base
