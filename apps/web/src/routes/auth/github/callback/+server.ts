@@ -1,9 +1,4 @@
 import { error, redirect } from '@sveltejs/kit';
-import { dev } from '$app/env';
-import {
-  GITHUB_APP_CLIENT_ID,
-  GITHUB_APP_CLIENT_SECRET,
-} from '$app/env/private';
 import {
   COOKIE_PATH,
   completeLogin,
@@ -13,6 +8,11 @@ import {
   safeRedirectPath,
   TOKEN_COOKIE,
 } from '#lib/server/oauth.ts';
+import { dev } from '$app/env';
+import {
+  GITHUB_APP_CLIENT_ID,
+  GITHUB_APP_CLIENT_SECRET,
+} from '$app/env/private';
 
 export const GET = async ({ url, cookies, fetch }) => {
   const stateCookie = cookies.get(STATE_COOKIE);
