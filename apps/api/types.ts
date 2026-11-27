@@ -397,7 +397,7 @@ export interface InboxItem {
   author: string | null;
   /** Never empty: `['open']` when nobody has decided, else the decisions held. */
   statuses: InboxStatus[];
-  /** Issue comments plus inline review comments. */
+  /** Issue comments plus inline review comments. A lower bound when the PR has more than 100 review threads. */
   comments: number;
   additions: number;
   deletions: number;

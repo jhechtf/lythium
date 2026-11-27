@@ -234,7 +234,7 @@ export function inboxStatuses(latest: { state?: unknown }[]): InboxStatus[] {
   return out.length > 0 ? out : ['open'];
 }
 
-/** A PR node → an item; `truncated` when a bounded list was cut short. */
+/** A PR node → an item; `truncated` when its review list was cut short. */
 function parsePR(
   node: unknown,
   viewerLogin: string,
@@ -251,9 +251,10 @@ function parsePR(
   const reviewNodes = list(reviews?.nodes) as { state?: unknown }[];
   const events = list(obj(n.timelineItems)?.nodes) as RequestEvent[];
   const author = obj(n.author)?.login;
-  const truncated =
-    num(threads?.totalCount) > threadNodes.length ||
-    num(reviews?.totalCount) > reviewNodes.length;
+  // Only a cut review list changes what's reported (statuses). A cut thread
+  // list just makes `comments` a lower bound, so it doesn't mark the inbox
+  // incomplete: one big PR would otherwise do that for as long as it's listed.
+  const truncated = num(reviews?.totalCount) > reviewNodes.length;
 
   return {
     truncated,

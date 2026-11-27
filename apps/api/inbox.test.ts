@@ -23,6 +23,8 @@ interface FakePR {
   comments?: number;
   /** Comment count of each inline review thread. */
   threads?: number[];
+  /** Real thread total when more than `threads` were returned. */
+  threadsTotal?: number;
   /** Latest opinionated review states, one per reviewer. */
   reviews?: string[];
   /** [reviewer login or null (team), createdAt] review_requested events. */
@@ -49,7 +51,7 @@ const prNode = (p: FakePR) => ({
   repository: { nameWithOwner: p.repo },
   comments: { totalCount: p.comments ?? 0 },
   reviewThreads: {
-    totalCount: (p.threads ?? []).length,
+    totalCount: p.threadsTotal ?? (p.threads ?? []).length,
     nodes: (p.threads ?? []).map((n) => ({ comments: { totalCount: n } })),
   },
   latestOpinionatedReviews: {
@@ -507,6 +509,57 @@ describe('GET /inbox', () => {
     });
     const body = (await (await get()).json()) as InboxFlatResponse;
     expect(body.complete).toBe(false);
+  });
+
+  it('does not mark the inbox incomplete for a PR with more than 100 threads', async () => {
+    const threads = Array.from({ length: 100 }, () => 2);
+    stubGithub({
+      scope: [
+        {
+          repo: 'o/a',
+          number: 1,
+          comments: 5,
+          threads,
+          threadsTotal: 350,
+          reviews: ['APPROVED'],
+        },
+        { repo: 'o/b', number: 2 },
+      ],
+    });
+    const body = (await (await get()).json()) as InboxFlatResponse;
+    expect(body.complete).toBe(true);
+    // lower bound: issue comments + the 100 fetched threads
+    expect(body.items.find((i) => i.number === 1)?.comments).toBe(205);
+    expect(body.items.map((i) => i.number).sort()).toEqual([1, 2]);
+    expect(body.counts.pending).toBe(2);
+    expect(body.items.find((i) => i.number === 1)?.statuses).toEqual([
+      'approved',
+    ]);
+  });
+
+  it('still marks incomplete when reviews are cut, with or without cut threads', async () => {
+    for (const threadsTotal of [undefined, 350]) {
+      clearInboxCache();
+      stubGithub({
+        scope: [
+          {
+            repo: 'o/a',
+            number: 1,
+            reviews: ['APPROVED'],
+            threads: [1],
+            threadsTotal,
+          },
+        ],
+      });
+      const real = globalThis.fetch;
+      vi.stubGlobal('fetch', async (u: string, i: RequestInit) => {
+        const b = await (await real(u, i)).json();
+        b.data.scope.nodes[0].latestOpinionatedReviews.totalCount = 500;
+        return json(b);
+      });
+      const body = (await (await get()).json()) as InboxFlatResponse;
+      expect(body.complete).toBe(false);
+    }
   });
 
   it('does not cache a partial read: the next load re-reads and recovers', async () => {
