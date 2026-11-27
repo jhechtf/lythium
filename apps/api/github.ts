@@ -161,7 +161,9 @@ export async function githubFetchAll<T>(
  * the rate-limit kind says so: `x-ratelimit-remaining: 0` (primary) or a
  * `Retry-After` header (secondary).
  */
-const isRateLimited = (result: Pick<FetchResult, 'status' | 'headers'>) =>
+export const isRateLimited = (
+  result: Pick<FetchResult, 'status' | 'headers'>,
+) =>
   result.status === 429 ||
   (result.status === 403 &&
     (result.headers.get('x-ratelimit-remaining') === '0' ||

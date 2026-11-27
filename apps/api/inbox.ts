@@ -6,6 +6,7 @@ import {
   githubFetch,
   githubFetchAll,
   isGithubName,
+  isRateLimited,
   upstreamError,
 } from './github.ts';
 import { type GithubReview, mapReviewers } from './pr-details.ts';
@@ -39,7 +40,10 @@ const ENRICH_CONCURRENCY = 8;
 const DEFAULT_PER_PAGE = 25;
 const MAX_PER_PAGE = 100;
 const MAX_Q_LENGTH = 256;
-const TIMELINE_CAP = 1000;
+// The timeline only feeds `requested_at` (optional) and is paged serially per
+// PR, for up to 100 PRs: keep it short. Longer timelines give `null`.
+const TIMELINE_MAX_PAGES = 2;
+const TIMELINE_CAP = TIMELINE_MAX_PAGES * 100;
 
 export const SEARCH_CACHE_TTL_MS = 30_000;
 export const ENRICH_CACHE_TTL_MS = 5 * 60_000;
@@ -250,16 +254,19 @@ async function enrich(
       `${base}/issues/${c.number}/timeline`,
       token,
       (d) => (Array.isArray(d) ? (d as TimelineEvent[]) : []),
+      TIMELINE_MAX_PAGES,
     ),
   ]);
 
-  if (details.status === 404) return { kind: 'gone' };
-  if (!details.ok) return { kind: 'error', result: details };
-  if (!reviews.ok) {
-    return reviews.result.status === 404
-      ? { kind: 'gone' }
-      : { kind: 'error', result: reviews.result };
-  }
+  // Only token-wide failures (bad token, rate limit) abort the inbox. Any
+  // other unreadable PR (404, a 403 from SAML SSO, a timeout, a 5xx) is
+  // dropped and marks the inbox incomplete.
+  const fatal = (r: FetchResult): EnrichOutcome =>
+    r.status === 401 || isRateLimited(r)
+      ? { kind: 'error', result: r }
+      : { kind: 'gone' };
+  if (!details.ok) return fatal(details);
+  if (!reviews.ok) return fatal(reviews.result);
 
   const d = details.data as GithubPRInbox | null;
   const author = d?.user?.login;

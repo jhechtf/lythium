@@ -493,9 +493,36 @@ describe('GET /inbox', () => {
     expect((await get()).status).toBe(504);
   });
 
-  it('fails when a PR read fails with a non-404 error', async () => {
-    stubGithub({ scope: [{ ...sample[0], detailsStatus: 503 }] });
-    expect((await get()).status).toBe(502);
+  it('drops a PR that cannot be read and marks the inbox incomplete', async () => {
+    for (const detailsStatus of [403, 502, 503]) {
+      clearInboxCache();
+      stubGithub({
+        scope: [sample[0], { ...sample[1], detailsStatus }],
+      });
+      const res = await get();
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as InboxFlatResponse;
+      expect(body.items).toHaveLength(1);
+      expect(body.complete).toBe(false);
+    }
+  });
+
+  it('fails the request when a PR read hits a token-wide failure', async () => {
+    for (const [detailsStatus, expected] of [
+      [429, 429],
+      [401, 401],
+    ] as const) {
+      clearInboxCache();
+      stubGithub({ scope: [sample[0], { ...sample[1], detailsStatus }] });
+      expect((await get()).status).toBe(expected);
+    }
+  });
+
+  it('reads at most two timeline pages per PR', async () => {
+    stubGithub({ scope: [sample[0]] });
+    await get();
+    const pages = calls.filter((c) => c.url.includes('/timeline'));
+    expect(pages.length).toBeLessThanOrEqual(2);
   });
 
   it('returns an empty inbox', async () => {
