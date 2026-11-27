@@ -145,6 +145,8 @@ function cacheGet(token: string, q: string): Snapshot | undefined {
     return undefined;
   }
   m.set(q, hit); // most recently used
+  cache.delete(token);
+  cache.set(token, m); // and its token
   return hit.value;
 }
 

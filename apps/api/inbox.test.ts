@@ -685,6 +685,20 @@ describe('GET /inbox', () => {
       expect(await requests(() => load('full0', 'q0'))).toBe(1);
     });
 
+    it('treats a read as recent use of its token at the global cap', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      stubGithub({ scope: sample });
+      for (let i = 0; i < INBOX_CACHE_MAX; i++) await load(`tok${i}`);
+      // the oldest token is read, never written again
+      expect(await requests(() => load('tok0'))).toBe(0);
+      await load('newcomer');
+      expect(inboxCacheSize()).toBe(INBOX_CACHE_MAX);
+      // check the survivor before loading the evicted token (which would
+      // itself evict something)
+      expect(await requests(() => load('tok0'))).toBe(0);
+      expect(await requests(() => load('tok1'))).toBe(1);
+    });
+
     it('expires entries after the TTL and serves warm ones before it', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       stubGithub({ scope: sample });
