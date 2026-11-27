@@ -6,6 +6,7 @@ import {
   INBOX_CACHE_PER_TOKEN_MAX,
   INBOX_CACHE_TTL_MS,
   inboxCacheSize,
+  inboxRequest,
   inboxStatuses,
   latestRequestTo,
   MAX_CANDIDATES,
@@ -106,6 +107,11 @@ function stubGithub(opts: {
       return json({
         data: {
           viewer: { login: opts.viewer ?? 'me' },
+          rateLimit: {
+            cost: 7,
+            remaining: 4993,
+            resetAt: '2026-01-01T00:00:00Z',
+          },
           scope: {
             issueCount: opts.scopeCount ?? opts.scope.length,
             nodes: scopeNodes,
@@ -618,6 +624,36 @@ describe('GET /inbox', () => {
       const body = await run(ev(20, 'bob'));
       expect(body.items[0].requested_at).toBeNull();
       expect(body.complete).toBe(true);
+    });
+  });
+
+  describe('rate-limit measurement', () => {
+    it('sends viewer and rateLimit in the one production query', async () => {
+      stubGithub({ scope: sample });
+      let sent = '';
+      const real = globalThis.fetch;
+      vi.stubGlobal('fetch', async (u: string, i: RequestInit) => {
+        sent = String(JSON.parse(String(i.body)).query);
+        return real(u, i);
+      });
+      await get();
+      expect(sent).toBe(inboxRequest('').query);
+      expect(sent).toMatch(/viewer \{ login \}/);
+      expect(sent).toMatch(/rateLimit \{ cost remaining resetAt \}/);
+      // comment totals still come from each thread's comments
+      expect(sent).toMatch(
+        /reviewThreads\([^)]*\) \{[^}]*nodes \{ comments \{ totalCount \} \}/,
+      );
+    });
+
+    it('does not leak rateLimit into the response and still caches', async () => {
+      stubGithub({ scope: sample });
+      const res = await get();
+      expect(JSON.stringify(await res.json())).not.toMatch(
+        /rateLimit|remaining|resetAt/,
+      );
+      await get();
+      expect(calls).toHaveLength(1);
     });
   });
 

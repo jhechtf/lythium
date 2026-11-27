@@ -70,8 +70,9 @@ const hasOperator = (q: string) =>
 // `latestOpinionatedReviews`: each reviewer's latest APPROVED / CHANGES_REQUESTED
 // / DISMISSED review, so a later COMMENTED review doesn't erase a decision and
 // a dismissed one no longer counts.
-const QUERY = `query Inbox($scope: String!, $match: String!, $hasMatch: Boolean!) {
+export const INBOX_QUERY = `query Inbox($scope: String!, $match: String!, $hasMatch: Boolean!) {
   viewer { login }
+  rateLimit { cost remaining resetAt }
   scope: search(query: $scope, type: ISSUE, first: ${MAX_CANDIDATES}) {
     issueCount
     nodes {
@@ -109,6 +110,16 @@ const QUERY = `query Inbox($scope: String!, $match: String!, $hasMatch: Boolean!
     nodes { ... on PullRequest { number repository { nameWithOwner } } }
   }
 }`;
+
+/** The exact request `GET /inbox` sends for a `q` (shared with the measure script). */
+export const inboxRequest = (q: string) => ({
+  query: INBOX_QUERY,
+  variables: {
+    scope: SCOPE,
+    match: q ? `${SCOPE} ${q}` : '',
+    hasMatch: q !== '',
+  },
+});
 
 // Cache of fully-read inboxes: SHA-256 of the token (never the token) → `q` →
 // entry, so one caller can't be served another's results. Policy:
@@ -305,11 +316,8 @@ async function loadInbox(
   const cached = cacheGet(hashed, q);
   if (cached) return { ok: true, snapshot: cached };
 
-  const res = await githubGraphQL(token, QUERY, {
-    scope: SCOPE,
-    match: q ? `${SCOPE} ${q}` : '',
-    hasMatch: q !== '',
-  });
+  const req = inboxRequest(q);
+  const res = await githubGraphQL(token, req.query, req.variables);
   if (!res.ok) return res;
 
   const login = obj(res.data.viewer)?.login;
