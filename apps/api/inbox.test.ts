@@ -608,6 +608,31 @@ describe('GET /inbox', () => {
     expect((await get()).status).toBe(504);
   });
 
+  it('bounds the whole read by one timed request and recovers after a stall', async () => {
+    // The whole inbox is one outbound request carrying a timeout signal, so
+    // there is no per-PR fan-out for a deadline to cut off.
+    const signals: (AbortSignal | null | undefined)[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_u: string, init?: RequestInit) => {
+        signals.push(init?.signal);
+        throw Object.assign(new Error('stalled'), { name: 'TimeoutError' });
+      }),
+    );
+    expect((await get()).status).toBe(504);
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+    expect(signals[0]?.aborted).toBe(false);
+
+    // The timeout isn't cached: the next load re-reads and succeeds.
+    stubGithub({ scope: sample });
+    const ok = await get();
+    expect(ok.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    await get();
+    expect(calls).toHaveLength(1);
+  });
+
   it('returns an empty inbox', async () => {
     stubGithub({ scope: [] });
     const body = (await (await get()).json()) as InboxFlatResponse;
