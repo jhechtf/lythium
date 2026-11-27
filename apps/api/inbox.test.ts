@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { app } from './app.ts';
-import { clearInboxCache, inboxStatuses, latestRequestTo } from './inbox.ts';
-import { clearViewerCache } from './review-context.ts';
+import {
+  clearInboxCache,
+  inboxStatuses,
+  latestRequestTo,
+  MAX_CANDIDATES,
+} from './inbox.ts';
 import type { InboxFlatResponse, InboxGroupedResponse } from './types.ts';
 
 interface FakePR {
@@ -11,107 +15,108 @@ interface FakePR {
   author?: string;
   additions?: number;
   deletions?: number;
+  /** Issue comments. */
   comments?: number;
-  review_comments?: number;
-  reviews?: { login: string; state: string; at: string }[];
-  /** [reviewer, created_at] review_requested events. */
-  requests?: [string, string][];
-  timelineStatus?: number;
-  /** Make the timeline call fail with a network error. */
-  timelineNetworkError?: boolean;
-  detailsStatus?: number;
-  updated_at?: string;
+  /** Comment count of each inline review thread. */
+  threads?: number[];
+  /** Latest opinionated review states, one per reviewer. */
+  reviews?: string[];
+  /** [reviewer login or null (team), createdAt] review_requested events. */
+  requests?: [string | null, string][];
 }
 
 const json = (data: unknown, status = 200, headers: HeadersInit = {}) =>
   new Response(JSON.stringify(data), { status, headers });
 
-let calls: { url: string; auth: string | null }[] = [];
+interface Call {
+  url: string;
+  auth: string | null;
+  variables?: { scope: string; match: string; hasMatch: boolean };
+}
+let calls: Call[] = [];
 
-/** Stub GitHub: `scope` PRs are the inbox, `matches` are hits for any extra q. */
+const prNode = (p: FakePR) => ({
+  number: p.number,
+  title: p.title ?? `PR ${p.number}`,
+  url: `https://github.com/${p.repo}/pull/${p.number}`,
+  additions: p.additions ?? 1,
+  deletions: p.deletions ?? 2,
+  author: { login: p.author ?? 'alice' },
+  repository: { nameWithOwner: p.repo },
+  comments: { totalCount: p.comments ?? 0 },
+  reviewThreads: {
+    totalCount: (p.threads ?? []).length,
+    nodes: (p.threads ?? []).map((n) => ({ comments: { totalCount: n } })),
+  },
+  latestOpinionatedReviews: {
+    totalCount: (p.reviews ?? []).length,
+    nodes: (p.reviews ?? []).map((state) => ({ state })),
+  },
+  timelineItems: {
+    // `last: 20`: GitHub returns the newest 20 events.
+    nodes: (p.requests ?? []).slice(-20).map(([who, at]) => ({
+      createdAt: at,
+      requestedReviewer: who === null ? {} : { login: who },
+    })),
+  },
+});
+
+/**
+ * Stub GitHub's GraphQL endpoint: `scope` PRs are the inbox, `matches` are the
+ * hits for the `q` search (any request with `hasMatch`).
+ */
 function stubGithub(opts: {
   scope: FakePR[];
   matches?: FakePR[];
   viewer?: string;
-  searchTotal?: number;
-  incomplete?: boolean;
-  searchStatus?: number;
-  searchHeaders?: HeadersInit;
-  viewerStatus?: number;
+  /** Reported issueCount of the scope search. */
+  scopeCount?: number;
+  matchCount?: number;
+  /** A node GitHub couldn't return (e.g. SAML-protected org). */
+  nullNodeAt?: number;
+  /** Errors returned next to data (partial read), or instead of it. */
+  errors?: { type?: string; message?: string }[];
+  noData?: boolean;
+  status?: number;
+  headers?: HeadersInit;
 }) {
-  const all = new Map<string, FakePR>();
-  for (const p of [...opts.scope, ...(opts.matches ?? [])])
-    all.set(`${p.repo}#${p.number}`, p);
-  const hit = (p: FakePR) => ({
-    number: p.number,
-    repository_url: `https://api.github.com/repos/${p.repo}`,
-    updated_at: p.updated_at ?? '2026-01-01T00:00:00Z',
-    pull_request: {},
-  });
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: string, init?: RequestInit) => {
       const url = String(input);
       const auth = new Headers(init?.headers).get('Authorization');
-      calls.push({ url, auth });
-      const u = new URL(url);
-      if (u.pathname === '/user') {
-        if (opts.viewerStatus) return json({}, opts.viewerStatus);
-        return json({ id: 1, login: opts.viewer ?? 'me' });
-      }
-      if (u.pathname === '/search/issues') {
-        if (opts.searchStatus)
-          return json(
-            { message: 'nope' },
-            opts.searchStatus,
-            opts.searchHeaders,
-          );
-        const q = u.searchParams.get('q') ?? '';
-        const list = q.includes('foo') ? (opts.matches ?? []) : opts.scope;
-        return json({
-          total_count: opts.searchTotal ?? list.length,
-          incomplete_results: opts.incomplete ?? false,
-          items: list.map(hit),
-        });
-      }
-      const m = /^\/repos\/([^/]+\/[^/]+)\/(pulls|issues)\/(\d+)(\/\w+)?$/.exec(
-        u.pathname,
-      );
-      if (!m) return json({}, 500);
-      const pr = all.get(`${m[1]}#${m[3]}`);
-      if (!pr) return json({}, 404);
-      if (!m[4]) {
-        if (pr.detailsStatus) return json({}, pr.detailsStatus);
-        return json({
-          title: pr.title ?? `PR ${pr.number}`,
-          html_url: `https://github.com/${pr.repo}/pull/${pr.number}`,
-          user: { login: pr.author ?? 'alice' },
-          additions: pr.additions ?? 1,
-          deletions: pr.deletions ?? 2,
-          comments: pr.comments ?? 0,
-          review_comments: pr.review_comments ?? 0,
-        });
-      }
-      if (m[4] === '/reviews')
-        return json(
-          (pr.reviews ?? []).map((r) => ({
-            user: { login: r.login },
-            state: r.state,
-            submitted_at: r.at,
-          })),
-        );
-      if (m[4] === '/timeline') {
-        if (pr.timelineNetworkError) throw new TypeError('network down');
-        if (pr.timelineStatus) return json({}, pr.timelineStatus);
-        return json(
-          (pr.requests ?? []).map(([who, at]) => ({
-            event: 'review_requested',
-            created_at: at,
-            requested_reviewer: { login: who },
-          })),
-        );
-      }
-      return json({}, 500);
+      const body = JSON.parse(String(init?.body ?? '{}')) as {
+        variables?: Call['variables'];
+      };
+      calls.push({ url, auth, variables: body.variables });
+      if (opts.status)
+        return json({ message: 'nope' }, opts.status, opts.headers);
+      if (opts.noData) return json({ data: null, errors: opts.errors });
+      const v = body.variables;
+      const scopeNodes: unknown[] = opts.scope.map(prNode);
+      if (opts.nullNodeAt !== undefined) scopeNodes[opts.nullNodeAt] = null;
+      const matches = opts.matches ?? [];
+      return json({
+        data: {
+          viewer: { login: opts.viewer ?? 'me' },
+          scope: {
+            issueCount: opts.scopeCount ?? opts.scope.length,
+            nodes: scopeNodes,
+          },
+          ...(v?.hasMatch
+            ? {
+                matched: {
+                  issueCount: opts.matchCount ?? matches.length,
+                  nodes: matches.map((m) => ({
+                    number: m.number,
+                    repository: { nameWithOwner: m.repo },
+                  })),
+                },
+              }
+            : {}),
+        },
+        ...(opts.errors ? { errors: opts.errors } : {}),
+      });
     }),
   );
 }
@@ -126,7 +131,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   clearInboxCache();
-  clearViewerCache();
   vi.unstubAllGlobals();
 });
 
@@ -135,70 +139,57 @@ const sample: FakePR[] = [
     repo: 'o/a',
     number: 1,
     comments: 2,
-    review_comments: 3,
+    threads: [1, 2],
     requests: [
       ['me', '2026-01-01T00:00:00Z'],
       ['me', '2026-03-01T00:00:00Z'],
       ['other', '2026-05-01T00:00:00Z'],
+      [null, '2026-06-01T00:00:00Z'],
     ],
   },
   {
     repo: 'o/b',
     number: 2,
-    reviews: [{ login: 'bob', state: 'APPROVED', at: '1' }],
+    reviews: ['APPROVED'],
     requests: [['me', '2026-02-01T00:00:00Z']],
   },
   {
     repo: 'o/a',
     number: 3,
-    reviews: [
-      { login: 'bob', state: 'APPROVED', at: '1' },
-      { login: 'carol', state: 'CHANGES_REQUESTED', at: '2' },
-    ],
+    reviews: ['APPROVED', 'CHANGES_REQUESTED'],
     requests: [['me', '2026-04-01T00:00:00Z']],
   },
   { repo: 'o/b', number: 4 }, // no known request time
 ];
 
 describe('inbox helpers', () => {
-  it('derives independent statuses from the latest decision per reviewer', () => {
-    const r = (login: string, state: string, at: string) => ({
-      user: { login },
-      state,
-      submitted_at: at,
-    });
+  it("derives independent statuses from each reviewer's latest decision", () => {
     expect(inboxStatuses([])).toEqual(['open']);
-    expect(inboxStatuses([r('a', 'COMMENTED', '1')])).toEqual(['open']);
+    // DISMISSED / COMMENTED are not decisions
     expect(
-      inboxStatuses([
-        r('a', 'APPROVED', '1'),
-        r('b', 'CHANGES_REQUESTED', '1'),
-      ]),
-    ).toEqual(['changes_requested', 'approved']);
-    // a reviewer who changed their mind no longer holds the old decision
-    expect(
-      inboxStatuses([
-        r('a', 'CHANGES_REQUESTED', '1'),
-        r('a', 'APPROVED', '2'),
-      ]),
-    ).toEqual(['approved']);
-    expect(
-      inboxStatuses([r('a', 'APPROVED', '1'), r('a', 'DISMISSED', '2')]),
+      inboxStatuses([{ state: 'DISMISSED' }, { state: 'COMMENTED' }]),
     ).toEqual(['open']);
+    expect(
+      inboxStatuses([{ state: 'APPROVED' }, { state: 'CHANGES_REQUESTED' }]),
+    ).toEqual(['changes_requested', 'approved']);
+    expect(inboxStatuses([{ state: 'APPROVED' }, {}])).toEqual(['approved']);
   });
 
   it('picks the latest request aimed at the caller', () => {
-    const ev = (who: string, at: string) => ({
-      event: 'review_requested',
-      created_at: at,
-      requested_reviewer: { login: who },
+    const ev = (who: string | null, at: string) => ({
+      createdAt: at,
+      requestedReviewer: who === null ? {} : { login: who },
     });
     expect(
       latestRequestTo([ev('Me', '1'), ev('me', '3'), ev('x', '9')], 'me'),
     ).toBe('3');
-    expect(latestRequestTo([ev('x', '9')], 'me')).toBeNull();
+    expect(latestRequestTo([ev('x', '9'), ev(null, '8')], 'me')).toBeNull();
+    // null reviewer / missing fields are ignored safely
     expect(
-      latestRequestTo([{ event: 'commented', created_at: '1' }], 'me'),
+      latestRequestTo(
+        [{ requestedReviewer: null, createdAt: '1' }, {}, { createdAt: 2 }],
+        'me',
+      ),
     ).toBeNull();
   });
 });
@@ -244,16 +235,6 @@ describe('GET /inbox', () => {
       total_pages: 1,
     });
     expect(body.complete).toBe(true);
-  });
-
-  it('scopes the search to review-requested:@me with the caller token', async () => {
-    stubGithub({ scope: sample });
-    await get('', 'secret-token');
-    const search = calls.find((c) => c.url.includes('/search/issues'));
-    expect(decodeURIComponent(search?.url ?? '')).toContain(
-      'review-requested:@me',
-    );
-    expect(calls.every((c) => c.auth === 'Bearer secret-token')).toBe(true);
   });
 
   it('groups the same page by repository', async () => {
@@ -324,10 +305,13 @@ describe('GET /inbox', () => {
     });
     const body = (await (await get('?q=foo')).json()) as InboxFlatResponse;
     expect(body.items.map((i) => i.number)).toEqual([1]);
-    const qSearch = calls
-      .map((c) => decodeURIComponent(c.url))
-      .find((u) => u.includes('foo'));
-    expect(qSearch).toContain('review-requested:@me');
+    // the q search is the mandatory scope plus q, in the same request
+    const v = calls[0].variables;
+    expect(v?.hasMatch).toBe(true);
+    expect(v?.match).toContain('review-requested:@me');
+    expect(v?.match).toContain('is:open');
+    expect(v?.match.endsWith(' foo')).toBe(true);
+    expect(v?.scope).not.toContain('foo');
   });
 
   it.each([
@@ -391,144 +375,220 @@ describe('GET /inbox', () => {
     expect(calls.every((c) => c.auth === 'Bearer token-b')).toBe(true);
   });
 
-  it('reuses the cache until a PR changes', async () => {
-    stubGithub({
-      scope: [{ ...sample[0], updated_at: '2026-01-01T00:00:00Z' }],
+  it('scopes the search to review-requested:@me with the caller token', async () => {
+    stubGithub({ scope: sample });
+    await get('', 'secret-token');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('https://api.github.com/graphql');
+    expect(calls[0].auth).toBe('Bearer secret-token');
+    expect(calls[0].variables).toMatchObject({
+      scope: expect.stringContaining('review-requested:@me'),
+      hasMatch: false,
     });
-    await get();
-    clearViewerCache();
-    // search cache is still warm; a new updated_at would miss the enrich cache
-    expect((await get()).status).toBe(200);
-  });
-
-  it('reports a missing timeline as null requested_at, not an error', async () => {
-    stubGithub({ scope: [{ ...sample[0], timelineStatus: 403 }] });
-    const body = (await (await get()).json()) as InboxFlatResponse;
-    expect(body.items[0].requested_at).toBeNull();
-    expect(body.complete).toBe(true);
+    expect(calls[0].variables?.scope).toContain('is:pr is:open');
   });
 
   it.each([
-    ['a 503', { timelineStatus: 503 }],
-    ['a network error', { timelineNetworkError: true }],
-  ])('does not cache a timeline read that failed with %s', async (_n, fail) => {
-    const flaky: FakePR = {
-      ...sample[0],
-      requests: [['me', '2026-03-01T00:00:00Z']],
-      ...fail,
-    };
-    const other: FakePR = {
-      ...sample[1],
-      requests: [['me', '2026-02-01T00:00:00Z']],
-    };
-    stubGithub({ scope: [flaky, other] });
-    const timelineCalls = () =>
-      calls.filter(
-        (c) =>
-          c.url.includes('/timeline') && c.url.includes(`/${flaky.number}/`),
-      ).length;
+    ['without q', ''],
+    ['with q', '?q=foo'],
+  ])(
+    'reads a cold 100-PR inbox %s in a bounded number of requests',
+    async (_n, qs) => {
+      const many: FakePR[] = Array.from({ length: MAX_CANDIDATES }, (_, i) => ({
+        repo: `o/r${i % 7}`,
+        number: i + 1,
+        comments: 1,
+        threads: [1],
+        reviews: ['APPROVED'],
+        requests: [
+          ['me', `2026-01-${String((i % 28) + 1).padStart(2, '0')}T00:00:00Z`],
+        ],
+      }));
+      stubGithub({ scope: many, matches: many.slice(0, 10) });
+      const res = await get(qs, 'tok');
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as InboxFlatResponse;
+      expect(body.counts.pending).toBe(MAX_CANDIDATES);
+      expect(body.complete).toBe(true);
+      // one GraphQL request carries search, metadata and viewer: no per-PR REST
+      expect(calls).toHaveLength(1);
+      expect(calls.every((c) => c.url.endsWith('/graphql'))).toBe(true);
+      expect(
+        calls.some((c) => /\/(pulls|issues|reviews|timeline)/.test(c.url)),
+      ).toBe(false);
+      expect(calls.every((c) => c.auth === 'Bearer tok')).toBe(true);
+      expect(calls[0].variables?.hasMatch).toBe(qs !== '');
+    },
+  );
 
-    // Failed read: null, sorted last.
-    const first = (await (await get()).json()) as InboxFlatResponse;
-    const f1 = first.items.find((i) => i.number === flaky.number);
-    expect(f1?.requested_at).toBeNull();
-    expect(first.items[first.items.length - 1].number).toBe(flaky.number);
-    expect(timelineCalls()).toBe(1);
-
-    // Recovery on the next load, no cache clearing, same updated_at.
-    delete flaky.timelineStatus;
-    delete flaky.timelineNetworkError;
-    const second = (await (await get()).json()) as InboxFlatResponse;
-    expect(timelineCalls()).toBe(2);
-    expect(second.items[0].number).toBe(flaky.number);
-    expect(second.items[0].requested_at).toBe('2026-03-01T00:00:00Z');
-
-    // The recovered result is cached.
-    const third = (await (await get()).json()) as InboxFlatResponse;
-    expect(timelineCalls()).toBe(2);
-    expect(third.items[0].requested_at).toBe('2026-03-01T00:00:00Z');
-  });
-
-  it('still caches a successful but empty timeline', async () => {
-    const pr: FakePR = { ...sample[0], requests: [] };
-    stubGithub({ scope: [pr] });
-    const timelineCalls = () =>
-      calls.filter((c) => c.url.includes('/timeline')).length;
-    const first = (await (await get()).json()) as InboxFlatResponse;
-    expect(first.items[0].requested_at).toBeNull();
+  it('reuses a fully-read inbox for the same token and q', async () => {
+    stubGithub({ scope: sample });
     await get();
-    expect(timelineCalls()).toBe(1);
+    await get();
+    expect(calls).toHaveLength(1);
+    await get('', 'other-token');
+    expect(calls).toHaveLength(2);
+    expect(calls[1].auth).toBe('Bearer other-token');
   });
 
-  it('drops a PR that disappeared and marks the inbox incomplete', async () => {
-    stubGithub({ scope: [sample[0], { ...sample[1], detailsStatus: 404 }] });
+  it('counts inline review comments with issue comments', async () => {
+    stubGithub({
+      scope: [{ repo: 'o/a', number: 1, comments: 4, threads: [3, 1, 2] }],
+    });
     const body = (await (await get()).json()) as InboxFlatResponse;
-    expect(body.items).toHaveLength(1);
-    expect(body.counts.pending).toBe(1);
-    expect(body.complete).toBe(false);
+    expect(body.items[0].comments).toBe(10);
   });
 
-  it('marks the inbox incomplete past the read cap or on incomplete results', async () => {
-    stubGithub({ scope: sample, searchTotal: 500 });
-    expect(((await (await get()).json()) as InboxFlatResponse).complete).toBe(
-      false,
-    );
-    clearInboxCache();
-    stubGithub({ scope: sample, incomplete: true });
-    expect(((await (await get()).json()) as InboxFlatResponse).complete).toBe(
-      false,
-    );
+  it('keeps the latest request to the caller, null when none or unavailable', async () => {
+    stubGithub({
+      scope: [
+        { repo: 'o/a', number: 1, requests: [['me', '2026-01-01T00:00:00Z']] },
+        {
+          repo: 'o/a',
+          number: 2,
+          requests: [
+            ['x', '2026-05-01T00:00:00Z'],
+            [null, '2026-06-01T00:00:00Z'],
+          ],
+        },
+        { repo: 'o/a', number: 3 },
+      ],
+    });
+    const body = (await (await get()).json()) as InboxFlatResponse;
+    expect(body.items.map((i) => [i.number, i.requested_at])).toEqual([
+      [1, '2026-01-01T00:00:00Z'],
+      [3, null],
+      [2, null],
+    ]);
+  });
+
+  it('marks the inbox incomplete past the read cap', async () => {
+    stubGithub({ scope: sample, scopeCount: 500 });
+    const body = (await (await get()).json()) as InboxFlatResponse;
+    expect(body.complete).toBe(false);
+    expect(body.items).toHaveLength(4);
   });
 
   it('marks incomplete when the q search is partial', async () => {
-    stubGithub({ scope: sample, matches: [sample[0]], searchTotal: 5000 });
-    // scope search is also reported partial by the shared total; either way:
+    stubGithub({ scope: sample, matches: [sample[0]], matchCount: 5000 });
     const body = (await (await get('?q=foo')).json()) as InboxFlatResponse;
     expect(body.complete).toBe(false);
   });
 
-  it('maps upstream failures', async () => {
-    const reset = () => {
-      clearInboxCache();
-      clearViewerCache();
+  it('drops a PR GitHub could not return and marks the inbox incomplete', async () => {
+    stubGithub({
+      scope: sample,
+      nullNodeAt: 1,
+      errors: [{ type: 'FORBIDDEN', message: 'SAML enforcement' }],
+    });
+    const body = (await (await get()).json()) as InboxFlatResponse;
+    expect(body.items.map((i) => i.number)).not.toContain(2);
+    expect(body.counts.pending).toBe(3);
+    expect(body.complete).toBe(false);
+  });
+
+  it('marks incomplete when a bounded list is cut short', async () => {
+    const big: FakePR = {
+      repo: 'o/a',
+      number: 1,
+      reviews: ['APPROVED'],
     };
-    reset();
-    stubGithub({ scope: sample, searchStatus: 401 });
-    expect((await get()).status).toBe(401);
-
-    reset();
-    stubGithub({ scope: sample, searchStatus: 403 });
-    expect((await get()).status).toBe(403);
-
-    reset();
-    stubGithub({
-      scope: sample,
-      searchStatus: 429,
-      searchHeaders: { 'Retry-After': '30' },
+    stubGithub({ scope: [big] });
+    const real = globalThis.fetch;
+    vi.stubGlobal('fetch', async (u: string, i: RequestInit) => {
+      const res = await real(u, i);
+      const b = await res.json();
+      b.data.scope.nodes[0].latestOpinionatedReviews.totalCount = 500;
+      return json(b);
     });
-    const limited = await get();
-    expect(limited.status).toBe(429);
-    expect(limited.headers.get('Retry-After')).toBe('30');
+    const body = (await (await get()).json()) as InboxFlatResponse;
+    expect(body.complete).toBe(false);
+  });
 
-    reset();
+  it('does not cache a partial read: the next load re-reads and recovers', async () => {
+    const flaky: FakePR = {
+      repo: 'o/a',
+      number: 1,
+      requests: [['me', '2026-03-01T00:00:00Z']],
+    };
+    const other: FakePR = {
+      repo: 'o/b',
+      number: 2,
+      requests: [['me', '2026-02-01T00:00:00Z']],
+    };
+    // first read: the PR's metadata couldn't be returned
     stubGithub({
-      scope: sample,
-      searchStatus: 403,
-      searchHeaders: { 'x-ratelimit-remaining': '0', 'Retry-After': '9' },
+      scope: [flaky, other],
+      nullNodeAt: 0,
+      errors: [{ type: 'INTERNAL', message: 'timeout' }],
     });
-    expect((await get()).status).toBe(429);
+    const first = (await (await get()).json()) as InboxFlatResponse;
+    expect(first.items.map((i) => i.number)).toEqual([2]);
+    expect(first.complete).toBe(false);
+    expect(calls).toHaveLength(1);
 
-    reset();
-    stubGithub({ scope: sample, searchStatus: 422 });
-    expect((await get()).status).toBe(400);
+    // recovered, no cache clearing
+    stubGithub({ scope: [flaky, other] });
+    const second = (await (await get()).json()) as InboxFlatResponse;
+    expect(calls).toHaveLength(2);
+    expect(second.items[0].number).toBe(1);
+    expect(second.items[0].requested_at).toBe('2026-03-01T00:00:00Z');
+    expect(second.complete).toBe(true);
 
-    reset();
-    stubGithub({ scope: sample, searchStatus: 500 });
+    // the recovered read is cached
+    await get();
+    expect(calls).toHaveLength(2);
+  });
+
+  it('still caches a successful read with no request timestamps', async () => {
+    stubGithub({ scope: [{ repo: 'o/a', number: 1 }] });
+    const first = (await (await get()).json()) as InboxFlatResponse;
+    expect(first.items[0].requested_at).toBeNull();
+    await get();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('maps upstream failures', async () => {
+    const cases: [Parameters<typeof stubGithub>[0], number][] = [
+      [{ scope: sample, status: 401 }, 401],
+      [{ scope: sample, status: 403 }, 403],
+      [{ scope: sample, status: 429, headers: { 'Retry-After': '30' } }, 429],
+      [
+        {
+          scope: sample,
+          status: 403,
+          headers: { 'x-ratelimit-remaining': '0', 'Retry-After': '9' },
+        },
+        429,
+      ],
+      [{ scope: sample, status: 404 }, 502],
+      [{ scope: sample, status: 500 }, 502],
+      [
+        { scope: sample, noData: true, errors: [{ type: 'RATE_LIMITED' }] },
+        429,
+      ],
+      [{ scope: sample, noData: true, errors: [{ message: 'boom' }] }, 502],
+    ];
+    for (const [opts, status] of cases) {
+      clearInboxCache();
+      stubGithub(opts);
+      const res = await get();
+      expect(res.status).toBe(status);
+      const retry = (opts.headers as Record<string, string> | undefined)?.[
+        'Retry-After'
+      ];
+      if (retry && status === 429)
+        expect(res.headers.get('Retry-After')).toBe(retry);
+    }
+  });
+
+  it('never turns a failed read into an empty inbox', async () => {
+    stubGithub({ scope: [], noData: true, errors: [{ message: 'x' }] });
     expect((await get()).status).toBe(502);
-
-    reset();
-    stubGithub({ scope: sample, viewerStatus: 401 });
-    expect((await get()).status).toBe(401);
+    // and a failure is not cached
+    stubGithub({ scope: [] });
+    const ok = await get();
+    expect(ok.status).toBe(200);
   });
 
   it('maps network errors and timeouts', async () => {
@@ -548,43 +608,12 @@ describe('GET /inbox', () => {
     expect((await get()).status).toBe(504);
   });
 
-  it('drops a PR that cannot be read and marks the inbox incomplete', async () => {
-    for (const detailsStatus of [403, 502, 503]) {
-      clearInboxCache();
-      stubGithub({
-        scope: [sample[0], { ...sample[1], detailsStatus }],
-      });
-      const res = await get();
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as InboxFlatResponse;
-      expect(body.items).toHaveLength(1);
-      expect(body.complete).toBe(false);
-    }
-  });
-
-  it('fails the request when a PR read hits a token-wide failure', async () => {
-    for (const [detailsStatus, expected] of [
-      [429, 429],
-      [401, 401],
-    ] as const) {
-      clearInboxCache();
-      stubGithub({ scope: [sample[0], { ...sample[1], detailsStatus }] });
-      expect((await get()).status).toBe(expected);
-    }
-  });
-
-  it('reads at most two timeline pages per PR', async () => {
-    stubGithub({ scope: [sample[0]] });
-    await get();
-    const pages = calls.filter((c) => c.url.includes('/timeline'));
-    expect(pages.length).toBeLessThanOrEqual(2);
-  });
-
   it('returns an empty inbox', async () => {
     stubGithub({ scope: [] });
     const body = (await (await get()).json()) as InboxFlatResponse;
     expect(body.items).toEqual([]);
     expect(body.counts.pending).toBe(0);
     expect(body.pagination.total_pages).toBe(0);
+    expect(body.complete).toBe(true);
   });
 });

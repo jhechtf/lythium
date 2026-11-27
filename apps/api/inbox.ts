@@ -2,15 +2,10 @@ import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
 import {
   type FetchResult,
-  githubErrorMessage,
-  githubFetch,
-  githubFetchAll,
+  githubGraphQL,
   isGithubName,
-  isRateLimited,
   upstreamError,
 } from './github.ts';
-import { type GithubReview, mapReviewers } from './pr-details.ts';
-import { fetchViewer } from './review-context.ts';
 import { bearerToken } from './route-params.ts';
 import type {
   InboxGroup,
@@ -21,34 +16,39 @@ import type {
 } from './types.ts';
 
 /**
- * Review inbox (LYT-59): PRs awaiting the caller's review, from GitHub search
- * (`review-requested:@me`) with the caller's token, enriched per PR.
+ * Review inbox (LYT-59): PRs awaiting the caller's review, with the caller's
+ * token, read with ONE GitHub GraphQL request (search + per-PR metadata +
+ * viewer), so the number of outbound calls doesn't grow with the inbox. REST
+ * fan-out (details, reviews and timeline per PR) cost 300-400 subrequests for
+ * 100 PRs, past what a Workers invocation allows.
  *
  * Decisions:
  * - The candidate set is always the scope search. A `q` is a second search
- *   (scope + q) whose hits are intersected with it, so no `q` can widen the
- *   inbox. `q` is GitHub search syntax, but qualifiers/operators that could
- *   change the scope (`is:`, `review-requested:`, `OR`, parentheses…) → 400.
+ *   (scope + q) in the same request whose hits are intersected with it, so no
+ *   `q` can widen the inbox. `q` is GitHub search syntax, but qualifiers and
+ *   operators that could change the scope (`is:`, `review-requested:`, `OR`,
+ *   parentheses…) → 400.
  * - Counts, pending total and repositories cover the whole inbox, ignoring
  *   filters and paging.
  * - At most `MAX_CANDIDATES` PRs are read (one search page); anything beyond
- *   that, or incomplete results, sets `complete: false`.
+ *   that, a node GitHub couldn't return, or a list cut at its bound sets
+ *   `complete: false`. A failed GraphQL read is an error, never an empty inbox.
  */
 
 export const MAX_CANDIDATES = 100;
-const ENRICH_CONCURRENCY = 8;
 const DEFAULT_PER_PAGE = 25;
 const MAX_PER_PAGE = 100;
 const MAX_Q_LENGTH = 256;
-// The timeline only feeds `requested_at` (optional) and is paged serially per
-// PR, for up to 100 PRs: keep it short. Longer timelines give `null`.
-const TIMELINE_MAX_PAGES = 2;
-const TIMELINE_CAP = TIMELINE_MAX_PAGES * 100;
+// Bounds on the per-PR lists (one page each, no further paging). Node count
+// stays far below GitHub's 500k-node GraphQL limit:
+// 100 PRs × (100 reviews + 100 threads + 20 events) ≈ 22k.
+const REVIEWS_BOUND = 100;
+const THREADS_BOUND = 100;
+const REQUEST_EVENTS_BOUND = 20;
 
-export const SEARCH_CACHE_TTL_MS = 30_000;
-export const ENRICH_CACHE_TTL_MS = 5 * 60_000;
-const SEARCH_CACHE_MAX = 200;
-const ENRICH_CACHE_MAX = 2000;
+// Only a fully-read response is cached; this also bounds how stale it gets.
+export const INBOX_CACHE_TTL_MS = 30_000;
+const INBOX_CACHE_MAX = 200;
 
 const STATUSES: readonly InboxStatus[] = [
   'open',
@@ -56,32 +56,70 @@ const STATUSES: readonly InboxStatus[] = [
   'approved',
 ];
 
-const SCOPE = 'is:pr is:open archived:false review-requested:@me';
+const SCOPE =
+  'is:pr is:open archived:false review-requested:@me sort:updated-desc';
 
 // Anything that could turn the scope into something else.
 const SCOPE_BREAKING =
-  /(^|[\s"'(])-?(is|type|state|review-requested|user-review-requested|team-review-requested|reviewed-by|review|archived):/i;
+  /(^|[\s"'(])-?(is|type|state|review-requested|user-review-requested|team-review-requested|reviewed-by|review|archived|sort):/i;
 const hasOperator = (q: string) =>
   /(^|\s)(OR|AND|NOT)(\s|$)/.test(q) || /[()]/.test(q);
 
-// Caches are keyed by SHA-256 of the token (never the token), so one caller
-// can't be served another's results. Map order = insertion order.
-const searchCache = new Map<string, { value: SearchHits; expires: number }>();
-const enrichCache = new Map<string, { value: Enriched; expires: number }>();
+// `latestOpinionatedReviews`: each reviewer's latest APPROVED / CHANGES_REQUESTED
+// / DISMISSED review, so a later COMMENTED review doesn't erase a decision and
+// a dismissed one no longer counts.
+const QUERY = `query Inbox($scope: String!, $match: String!, $hasMatch: Boolean!) {
+  viewer { login }
+  scope: search(query: $scope, type: ISSUE, first: ${MAX_CANDIDATES}) {
+    issueCount
+    nodes {
+      ... on PullRequest {
+        number
+        title
+        url
+        additions
+        deletions
+        author { login }
+        repository { nameWithOwner }
+        comments { totalCount }
+        reviewThreads(first: ${THREADS_BOUND}) {
+          totalCount
+          nodes { comments { totalCount } }
+        }
+        latestOpinionatedReviews(first: ${REVIEWS_BOUND}) {
+          totalCount
+          nodes { state }
+        }
+        timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: ${REQUEST_EVENTS_BOUND}) {
+          nodes {
+            ... on ReviewRequestedEvent {
+              createdAt
+              requestedReviewer { ... on User { login } }
+            }
+          }
+        }
+      }
+    }
+  }
+  matched: search(query: $match, type: ISSUE, first: ${MAX_CANDIDATES}) @include(if: $hasMatch) {
+    issueCount
+    nodes { ... on PullRequest { number repository { nameWithOwner } } }
+  }
+}`;
 
-/** Tests: forget cached searches and PR details. */
+// Cached per SHA-256 of the token (never the token), so one caller can't be
+// served another's results. Map order = insertion order.
+const cache = new Map<string, { value: Snapshot; expires: number }>();
+
+/** Tests: forget cached inbox reads. */
 export function clearInboxCache() {
-  searchCache.clear();
-  enrichCache.clear();
+  cache.clear();
 }
 
 const tokenKey = (token: string) =>
   createHash('sha256').update(token).digest('hex');
 
-function cacheGet<T>(
-  cache: Map<string, { value: T; expires: number }>,
-  key: string,
-): T | undefined {
+function cacheGet(key: string): Snapshot | undefined {
   const hit = cache.get(key);
   if (!hit) return undefined;
   if (hit.expires > Date.now()) return hit.value;
@@ -89,212 +127,183 @@ function cacheGet<T>(
   return undefined;
 }
 
-function cacheSet<T>(
-  cache: Map<string, { value: T; expires: number }>,
-  max: number,
-  ttl: number,
-  key: string,
-  value: T,
-) {
-  if (cache.size >= max) {
+function cacheSet(key: string, value: Snapshot) {
+  if (cache.size >= INBOX_CACHE_MAX) {
     const oldest = cache.keys().next().value;
     if (oldest !== undefined) cache.delete(oldest);
   }
-  cache.set(key, { value, expires: Date.now() + ttl });
+  cache.set(key, { value, expires: Date.now() + INBOX_CACHE_TTL_MS });
 }
 
-interface Candidate {
-  repository: string;
-  number: number;
-  updatedAt: string;
-}
+type Enriched = Omit<InboxItem, 'repository' | 'number'>;
 
-interface SearchHits {
-  candidates: Candidate[];
-  /** More matches than were read, or GitHub said the results are partial. */
+interface Snapshot {
+  viewer: string;
+  items: (Pick<InboxItem, 'repository' | 'number'> & Enriched)[];
+  /** Keys of the `q` search's hits; null without a `q`. */
+  matchedKeys: Set<string> | null;
+  /** More matches than were read, a node was unreadable, or a list was cut. */
   partial: boolean;
-}
-
-interface GithubSearchResponse {
-  total_count?: number;
-  incomplete_results?: boolean;
-  items?: {
-    number?: unknown;
-    repository_url?: unknown;
-    updated_at?: unknown;
-    pull_request?: unknown;
-  }[];
 }
 
 const keyOf = (c: { repository: string; number: number }) =>
   `${c.repository.toLowerCase()}#${c.number}`;
 
-async function searchPRs(
-  token: string,
-  query: string,
-): Promise<
-  { ok: true; hits: SearchHits } | { ok: false; result: FetchResult }
-> {
-  const key = `${tokenKey(token)}:${query}`;
-  const cached = cacheGet(searchCache, key);
-  if (cached) return { ok: true, hits: cached };
-
-  const result = await githubFetch(
-    `/search/issues?q=${encodeURIComponent(query)}&sort=updated&order=desc&per_page=${MAX_CANDIDATES}`,
-    token,
-  );
-  if (!result.ok) return { ok: false, result };
-  const data = result.data as GithubSearchResponse | null;
-  const candidates: Candidate[] = [];
-  for (const it of data?.items ?? []) {
-    const m =
-      typeof it.repository_url === 'string'
-        ? /\/repos\/([^/]+\/[^/]+)$/.exec(it.repository_url)
-        : null;
-    if (!m || typeof it.number !== 'number' || !it.pull_request) continue;
-    candidates.push({
-      repository: m[1],
-      number: it.number,
-      updatedAt: typeof it.updated_at === 'string' ? it.updated_at : '',
-    });
-  }
-  const hits: SearchHits = {
-    candidates,
-    partial:
-      data?.incomplete_results === true ||
-      (typeof data?.total_count === 'number' &&
-        data.total_count > candidates.length),
-  };
-  cacheSet(searchCache, SEARCH_CACHE_MAX, SEARCH_CACHE_TTL_MS, key, hits);
-  return { ok: true, hits };
-}
-
-interface Enriched {
-  title: string;
-  html_url: string;
-  author: string | null;
-  statuses: InboxStatus[];
-  comments: number;
-  additions: number;
-  deletions: number;
-  requested_at: string | null;
-}
-
-interface GithubPRInbox {
-  title?: unknown;
-  html_url?: unknown;
-  user?: { login?: unknown } | null;
-  additions?: unknown;
-  deletions?: unknown;
-  comments?: unknown;
-  review_comments?: unknown;
-}
-
-interface TimelineEvent {
-  event?: unknown;
-  created_at?: unknown;
-  requested_reviewer?: { login?: unknown } | null;
+interface RequestEvent {
+  createdAt?: unknown;
+  requestedReviewer?: { login?: unknown } | null;
 }
 
 const num = (v: unknown) => (typeof v === 'number' ? v : 0);
+const obj = (v: unknown): Record<string, unknown> | null =>
+  typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : null;
+const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 
-/** Latest `review_requested` event aimed at `login`; null if none seen. */
+/**
+ * Latest review request aimed at `login` (a user; team requests and deleted
+ * reviewers have no login), from the bounded newest events; null if none.
+ */
 export function latestRequestTo(
-  events: TimelineEvent[],
+  events: RequestEvent[],
   login: string,
 ): string | null {
   let latest: string | null = null;
   for (const e of events) {
-    if (e.event !== 'review_requested') continue;
-    const who = e.requested_reviewer?.login;
+    const who = e?.requestedReviewer?.login;
     if (typeof who !== 'string' || who.toLowerCase() !== login.toLowerCase())
       continue;
-    if (typeof e.created_at !== 'string') continue;
-    if (latest === null || e.created_at > latest) latest = e.created_at;
+    if (typeof e.createdAt !== 'string') continue;
+    if (latest === null || e.createdAt > latest) latest = e.createdAt;
   }
   return latest;
 }
 
-/** Statuses from each reviewer's latest decision; `['open']` if none. */
-export function inboxStatuses(reviews: GithubReview[]): InboxStatus[] {
-  const states = new Set(mapReviewers(reviews, []).map((r) => r.state));
+/**
+ * Statuses from each reviewer's latest decision (GitHub's
+ * `latestOpinionatedReviews`, one per reviewer); `['open']` if none holds.
+ */
+export function inboxStatuses(latest: { state?: unknown }[]): InboxStatus[] {
+  const states = new Set(latest.map((r) => r?.state));
   const out: InboxStatus[] = [];
-  if (states.has('changes_requested')) out.push('changes_requested');
-  if (states.has('approved')) out.push('approved');
+  if (states.has('CHANGES_REQUESTED')) out.push('changes_requested');
+  if (states.has('APPROVED')) out.push('approved');
   return out.length > 0 ? out : ['open'];
 }
 
-type EnrichOutcome =
-  | { kind: 'ok'; value: Enriched }
-  | { kind: 'gone' }
-  | { kind: 'error'; result: FetchResult };
-
-async function enrich(
-  token: string,
+/** A PR node → an item; `truncated` when a bounded list was cut short. */
+function parsePR(
+  node: unknown,
   viewerLogin: string,
-  c: Candidate,
-): Promise<EnrichOutcome> {
-  const key = `${tokenKey(token)}:${keyOf(c)}:${c.updatedAt}`;
-  const cached = c.updatedAt ? cacheGet(enrichCache, key) : undefined;
-  if (cached) return { kind: 'ok', value: cached };
+): { item: Snapshot['items'][number]; truncated: boolean } | null {
+  const n = obj(node);
+  const repository = obj(n?.repository)?.nameWithOwner;
+  if (!n || typeof repository !== 'string' || typeof n.number !== 'number')
+    return null;
+  if (!repository.split('/').every(isGithubName)) return null;
 
-  const [owner, repo] = c.repository.split('/');
-  if (!isGithubName(owner) || !isGithubName(repo)) return { kind: 'gone' };
-  const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  const threads = obj(n.reviewThreads);
+  const threadNodes = list(threads?.nodes);
+  const reviews = obj(n.latestOpinionatedReviews);
+  const reviewNodes = list(reviews?.nodes) as { state?: unknown }[];
+  const events = list(obj(n.timelineItems)?.nodes) as RequestEvent[];
+  const author = obj(n.author)?.login;
+  const truncated =
+    num(threads?.totalCount) > threadNodes.length ||
+    num(reviews?.totalCount) > reviewNodes.length;
 
-  const [details, reviews, timeline] = await Promise.all([
-    githubFetch(`${base}/pulls/${c.number}`, token),
-    githubFetchAll<GithubReview>(
-      `${base}/pulls/${c.number}/reviews`,
-      token,
-      (d) => (Array.isArray(d) ? (d as GithubReview[]) : []),
-    ),
-    // Optional: only feeds `requested_at`, which may be null.
-    githubFetchAll<TimelineEvent>(
-      `${base}/issues/${c.number}/timeline`,
-      token,
-      (d) => (Array.isArray(d) ? (d as TimelineEvent[]) : []),
-      TIMELINE_MAX_PAGES,
-    ),
-  ]);
-
-  // Only token-wide failures (bad token, rate limit) abort the inbox. Any
-  // other unreadable PR (404, a 403 from SAML SSO, a timeout, a 5xx) is
-  // dropped and marks the inbox incomplete.
-  const fatal = (r: FetchResult): EnrichOutcome =>
-    r.status === 401 || isRateLimited(r)
-      ? { kind: 'error', result: r }
-      : { kind: 'gone' };
-  if (!details.ok) return fatal(details);
-  if (!reviews.ok) return fatal(reviews.result);
-
-  const d = details.data as GithubPRInbox | null;
-  const author = d?.user?.login;
-  // A timeline cut off at the cap may have missed the latest request.
-  const requested_at =
-    timeline.ok && timeline.items.length < TIMELINE_CAP
-      ? latestRequestTo(timeline.items, viewerLogin)
-      : null;
-  const value: Enriched = {
-    title: typeof d?.title === 'string' ? d.title : '',
-    html_url:
-      typeof d?.html_url === 'string'
-        ? d.html_url
-        : `https://github.com/${c.repository}/pull/${c.number}`,
-    author: typeof author === 'string' ? author : null,
-    statuses: inboxStatuses(reviews.items),
-    comments: num(d?.comments) + num(d?.review_comments),
-    additions: num(d?.additions),
-    deletions: num(d?.deletions),
-    requested_at,
+  return {
+    truncated,
+    item: {
+      repository,
+      number: n.number,
+      title: typeof n.title === 'string' ? n.title : '',
+      html_url:
+        typeof n.url === 'string'
+          ? n.url
+          : `https://github.com/${repository}/pull/${n.number}`,
+      author: typeof author === 'string' ? author : null,
+      statuses: inboxStatuses(reviewNodes),
+      // Issue comments + inline review comments (threads' comments).
+      comments:
+        num(obj(n.comments)?.totalCount) +
+        threadNodes.reduce<number>(
+          (sum, t) => sum + num(obj(obj(t)?.comments)?.totalCount),
+          0,
+        ),
+      additions: num(n.additions),
+      deletions: num(n.deletions),
+      requested_at: latestRequestTo(events, viewerLogin),
+    },
   };
-  // Don't cache a failed timeline read: the transient `null` would stick for
-  // the TTL and sort the PR last until it next changes.
-  if (c.updatedAt && timeline.ok) {
-    cacheSet(enrichCache, ENRICH_CACHE_MAX, ENRICH_CACHE_TTL_MS, key, value);
-  }
-  return { kind: 'ok', value };
 }
+
+/**
+ * One GraphQL request for the whole inbox. A response with errors but data is
+ * usable but partial: it is flagged and never cached, so the next load
+ * re-reads it.
+ */
+async function loadInbox(
+  token: string,
+  q: string,
+): Promise<
+  { ok: true; snapshot: Snapshot } | { ok: false; result: FetchResult }
+> {
+  const key = `${tokenKey(token)}:${q}`;
+  const cached = cacheGet(key);
+  if (cached) return { ok: true, snapshot: cached };
+
+  const res = await githubGraphQL(token, QUERY, {
+    scope: SCOPE,
+    match: q ? `${SCOPE} ${q}` : '',
+    hasMatch: q !== '',
+  });
+  if (!res.ok) return res;
+
+  const login = obj(res.data.viewer)?.login;
+  const scope = obj(res.data.scope);
+  if (typeof login !== 'string' || !scope) {
+    // Not a readable inbox: fail rather than look like an empty one.
+    return { ok: false, result: failure(502) };
+  }
+  const nodes = list(scope.nodes);
+  const items: Snapshot['items'] = [];
+  let partial = res.errors.length > 0 || num(scope.issueCount) > nodes.length;
+  for (const node of nodes) {
+    const pr = parsePR(node, login);
+    if (!pr) partial = true;
+    else {
+      items.push(pr.item);
+      if (pr.truncated) partial = true;
+    }
+  }
+
+  let matchedKeys: Set<string> | null = null;
+  if (q) {
+    const matched = obj(res.data.matched);
+    if (!matched) return { ok: false, result: failure(502) };
+    const mNodes = list(matched.nodes);
+    matchedKeys = new Set();
+    for (const node of mNodes) {
+      const n = obj(node);
+      const repo = obj(n?.repository)?.nameWithOwner;
+      if (typeof repo === 'string' && typeof n?.number === 'number')
+        matchedKeys.add(keyOf({ repository: repo, number: n.number }));
+      else partial = true;
+    }
+    if (num(matched.issueCount) > mNodes.length) partial = true;
+  }
+
+  const snapshot: Snapshot = { viewer: login, items, matchedKeys, partial };
+  if (res.errors.length === 0) cacheSet(key, snapshot);
+  return { ok: true, snapshot };
+}
+
+const failure = (status: number): FetchResult => ({
+  ok: false,
+  status,
+  data: null,
+  headers: new Headers(),
+});
 
 const compareItems = (a: InboxItem, b: InboxItem) => {
   if (a.requested_at !== b.requested_at) {
@@ -374,66 +383,16 @@ export const inboxRoutes = new Hono().get('/inbox', async (c) => {
     );
   }
 
-  const [scope, viewer, matched] = await Promise.all([
-    searchPRs(token, SCOPE),
-    fetchViewer(token),
-    q ? searchPRs(token, `${SCOPE} ${q}`) : Promise.resolve(null),
-  ]);
-  const searchFailure = (
-    r: { ok: false; result: FetchResult } | null,
-  ): FetchResult | null => (r && !r.ok ? r.result : null);
-  const failure =
-    searchFailure(scope.ok ? null : scope) ??
-    searchFailure(matched && !matched.ok ? matched : null) ??
-    (viewer.ok ? null : viewer);
-  if (failure) {
-    if (failure.status === 422) {
-      return c.json(
-        { error: githubErrorMessage(failure.data) ?? 'Invalid search query' },
-        400,
-      );
-    }
-    if (failure.status === 404)
+  const loaded = await loadInbox(token, q);
+  if (!loaded.ok) {
+    // A search GitHub rejects or a missing resource is our upstream's fault.
+    if (loaded.result.status === 404 || loaded.result.status === 422)
       return c.json({ error: 'GitHub API error' }, 502);
-    return upstreamError(c, failure, 'inbox');
+    return upstreamError(c, loaded.result, 'inbox');
   }
-  if (!scope.ok || !viewer.ok) throw new Error('unreachable');
-
-  // Enrich the whole inbox (counts need it), a few PRs at a time.
-  const candidates = scope.hits.candidates;
-  const outcomes: EnrichOutcome[] = new Array(candidates.length);
-  let next = 0;
-  let failed: FetchResult | null = null;
-  const worker = async () => {
-    while (!failed && next < candidates.length) {
-      const i = next++;
-      const out = await enrich(token, viewer.viewer.login, candidates[i]);
-      outcomes[i] = out;
-      if (out.kind === 'error') failed = out.result;
-    }
-  };
-  await Promise.all(
-    Array.from(
-      { length: Math.min(ENRICH_CONCURRENCY, candidates.length) },
-      worker,
-    ),
-  );
-  if (failed) return upstreamError(c, failed, 'inbox');
-
-  let complete = !scope.hits.partial;
-  const all: InboxItem[] = [];
-  candidates.forEach((cand, i) => {
-    const out = outcomes[i];
-    if (out.kind !== 'ok') {
-      complete = false;
-      return;
-    }
-    all.push({
-      repository: cand.repository,
-      number: cand.number,
-      ...out.value,
-    });
-  });
+  const { snapshot } = loaded;
+  const complete = !snapshot.partial;
+  const all = [...snapshot.items];
   all.sort(compareItems);
 
   const counts = {
@@ -452,10 +411,7 @@ export const inboxRoutes = new Hono().get('/inbox', async (c) => {
     a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1,
   );
 
-  const matchedKeys = matched?.ok
-    ? new Set(matched.hits.candidates.map(keyOf))
-    : null;
-  if (matched?.ok && matched.hits.partial) complete = false;
+  const { matchedKeys } = snapshot;
   const repoFilter = repoParam?.toLowerCase();
   const filtered = all.filter(
     (it) =>
