@@ -17,6 +17,8 @@ interface FakePR {
   /** [reviewer, created_at] review_requested events. */
   requests?: [string, string][];
   timelineStatus?: number;
+  /** Make the timeline call fail with a network error. */
+  timelineNetworkError?: boolean;
   detailsStatus?: number;
   updated_at?: string;
 }
@@ -99,6 +101,7 @@ function stubGithub(opts: {
           })),
         );
       if (m[4] === '/timeline') {
+        if (pr.timelineNetworkError) throw new TypeError('network down');
         if (pr.timelineStatus) return json({}, pr.timelineStatus);
         return json(
           (pr.requests ?? []).map(([who, at]) => ({
@@ -403,6 +406,58 @@ describe('GET /inbox', () => {
     const body = (await (await get()).json()) as InboxFlatResponse;
     expect(body.items[0].requested_at).toBeNull();
     expect(body.complete).toBe(true);
+  });
+
+  it.each([
+    ['a 503', { timelineStatus: 503 }],
+    ['a network error', { timelineNetworkError: true }],
+  ])('does not cache a timeline read that failed with %s', async (_n, fail) => {
+    const flaky: FakePR = {
+      ...sample[0],
+      requests: [['me', '2026-03-01T00:00:00Z']],
+      ...fail,
+    };
+    const other: FakePR = {
+      ...sample[1],
+      requests: [['me', '2026-02-01T00:00:00Z']],
+    };
+    stubGithub({ scope: [flaky, other] });
+    const timelineCalls = () =>
+      calls.filter(
+        (c) =>
+          c.url.includes('/timeline') && c.url.includes(`/${flaky.number}/`),
+      ).length;
+
+    // Failed read: null, sorted last.
+    const first = (await (await get()).json()) as InboxFlatResponse;
+    const f1 = first.items.find((i) => i.number === flaky.number);
+    expect(f1?.requested_at).toBeNull();
+    expect(first.items[first.items.length - 1].number).toBe(flaky.number);
+    expect(timelineCalls()).toBe(1);
+
+    // Recovery on the next load, no cache clearing, same updated_at.
+    delete flaky.timelineStatus;
+    delete flaky.timelineNetworkError;
+    const second = (await (await get()).json()) as InboxFlatResponse;
+    expect(timelineCalls()).toBe(2);
+    expect(second.items[0].number).toBe(flaky.number);
+    expect(second.items[0].requested_at).toBe('2026-03-01T00:00:00Z');
+
+    // The recovered result is cached.
+    const third = (await (await get()).json()) as InboxFlatResponse;
+    expect(timelineCalls()).toBe(2);
+    expect(third.items[0].requested_at).toBe('2026-03-01T00:00:00Z');
+  });
+
+  it('still caches a successful but empty timeline', async () => {
+    const pr: FakePR = { ...sample[0], requests: [] };
+    stubGithub({ scope: [pr] });
+    const timelineCalls = () =>
+      calls.filter((c) => c.url.includes('/timeline')).length;
+    const first = (await (await get()).json()) as InboxFlatResponse;
+    expect(first.items[0].requested_at).toBeNull();
+    await get();
+    expect(timelineCalls()).toBe(1);
   });
 
   it('drops a PR that disappeared and marks the inbox incomplete', async () => {

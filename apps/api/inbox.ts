@@ -288,7 +288,9 @@ async function enrich(
     deletions: num(d?.deletions),
     requested_at,
   };
-  if (c.updatedAt) {
+  // Don't cache a failed timeline read: the transient `null` would stick for
+  // the TTL and sort the PR last until it next changes.
+  if (c.updatedAt && timeline.ok) {
     cacheSet(enrichCache, ENRICH_CACHE_MAX, ENRICH_CACHE_TTL_MS, key, value);
   }
   return { kind: 'ok', value };
