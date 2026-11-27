@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
 import {
   type FetchResult,
@@ -7,6 +6,7 @@ import {
   upstreamError,
 } from './github.ts';
 import { bearerToken } from './route-params.ts';
+import { tokenHash } from './token-hash.ts';
 import type {
   InboxGroup,
   InboxItem,
@@ -115,9 +115,6 @@ const cache = new Map<string, { value: Snapshot; expires: number }>();
 export function clearInboxCache() {
   cache.clear();
 }
-
-const tokenKey = (token: string) =>
-  createHash('sha256').update(token).digest('hex');
 
 function cacheGet(key: string): Snapshot | undefined {
   const hit = cache.get(key);
@@ -248,7 +245,7 @@ async function loadInbox(
 ): Promise<
   { ok: true; snapshot: Snapshot } | { ok: false; result: FetchResult }
 > {
-  const key = `${tokenKey(token)}:${q}`;
+  const key = `${await tokenHash(token)}:${q}`;
   const cached = cacheGet(key);
   if (cached) return { ok: true, snapshot: cached };
 

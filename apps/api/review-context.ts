@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   createDb,
   type EditablePR,
@@ -14,6 +13,7 @@ import {
   isGithubName,
   localFailure,
 } from './github.ts';
+import { tokenHash } from './token-hash.ts';
 
 /**
  * Wiring for guided-review state (LYT-60). The API runs without a database:
@@ -99,7 +99,7 @@ export function clearViewerCache() {
 export async function fetchViewer(
   token: string,
 ): Promise<{ ok: true; viewer: Viewer } | LookupFailure> {
-  const key = createHash('sha256').update(token).digest('hex');
+  const key = await tokenHash(token);
   const hit = viewerCache.get(key);
   if (hit && hit.expires > Date.now()) return { ok: true, viewer: hit.viewer };
   if (hit) viewerCache.delete(key);
