@@ -93,6 +93,7 @@ const QUERY = `query Inbox($scope: String!, $match: String!, $hasMatch: Boolean!
           nodes { state }
         }
         timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: ${REQUEST_EVENTS_BOUND}) {
+          totalCount
           nodes {
             ... on ReviewRequestedEvent {
               createdAt
@@ -234,7 +235,7 @@ export function inboxStatuses(latest: { state?: unknown }[]): InboxStatus[] {
   return out.length > 0 ? out : ['open'];
 }
 
-/** A PR node → an item; `truncated` when its review list was cut short. */
+/** A PR node → an item; `truncated` when its review list was cut short, or the request window was cut without the viewer's request in it. */
 function parsePR(
   node: unknown,
   viewerLogin: string,
@@ -249,12 +250,19 @@ function parsePR(
   const threadNodes = list(threads?.nodes);
   const reviews = obj(n.latestOpinionatedReviews);
   const reviewNodes = list(reviews?.nodes) as { state?: unknown }[];
-  const events = list(obj(n.timelineItems)?.nodes) as RequestEvent[];
+  const timeline = obj(n.timelineItems);
+  const events = list(timeline?.nodes) as RequestEvent[];
   const author = obj(n.author)?.login;
   // Only a cut review list changes what's reported (statuses). A cut thread
   // list just makes `comments` a lower bound, so it doesn't mark the inbox
   // incomplete: one big PR would otherwise do that for as long as it's listed.
-  const truncated = num(reviews?.totalCount) > reviewNodes.length;
+  const requestedAt = latestRequestTo(events, viewerLogin);
+  // The viewer's request may be older than the newest events read: then
+  // `requested_at` is unknown, not absent. Finding it in the window is exact.
+  const requestWindowCut =
+    requestedAt === null && num(timeline?.totalCount) > events.length;
+  const truncated =
+    num(reviews?.totalCount) > reviewNodes.length || requestWindowCut;
 
   return {
     truncated,
@@ -277,7 +285,7 @@ function parsePR(
         ),
       additions: num(n.additions),
       deletions: num(n.deletions),
-      requested_at: latestRequestTo(events, viewerLogin),
+      requested_at: requestedAt,
     },
   };
 }

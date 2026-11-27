@@ -59,6 +59,7 @@ const prNode = (p: FakePR) => ({
     nodes: (p.reviews ?? []).map((state) => ({ state })),
   },
   timelineItems: {
+    totalCount: (p.requests ?? []).length,
     // `last: 20`: GitHub returns the newest 20 events.
     nodes: (p.requests ?? []).slice(-20).map(([who, at]) => ({
       createdAt: at,
@@ -560,6 +561,64 @@ describe('GET /inbox', () => {
       const body = (await (await get()).json()) as InboxFlatResponse;
       expect(body.complete).toBe(false);
     }
+  });
+
+  describe('request-event window', () => {
+    const ev = (n: number, who: string): [string, string][] =>
+      Array.from({ length: n }, (_, i) => [
+        who,
+        `2026-01-${String(i + 1).padStart(2, '0')}T00:00:00Z`,
+      ]);
+    const run = async (requests: [string, string][]) => {
+      clearInboxCache();
+      stubGithub({ scope: [{ repo: 'o/a', number: 1, requests }] });
+      return (await (await get()).json()) as InboxFlatResponse;
+    };
+
+    it('asks GitHub for the event count', async () => {
+      stubGithub({ scope: sample });
+      const real = globalThis.fetch;
+      let query = '';
+      vi.stubGlobal('fetch', async (u: string, i: RequestInit) => {
+        query = String(JSON.parse(String(i.body)).query);
+        return real(u, i);
+      });
+      await get();
+      expect(query).toMatch(/timelineItems\([^)]*\) \{\s*totalCount/);
+    });
+
+    it('is unknown and incomplete when the viewer is outside a cut window', async () => {
+      // the viewer's request is the oldest of 21; the newest 20 are someone else's
+      const body = await run([
+        ['me', '2025-12-01T00:00:00Z'],
+        ...ev(20, 'bob'),
+      ]);
+      expect(body.items).toHaveLength(1);
+      expect(body.items[0].requested_at).toBeNull();
+      expect(body.complete).toBe(false);
+    });
+
+    it('is exact and complete when the viewer is inside a cut window', async () => {
+      const body = await run([
+        ['me', '2025-12-01T00:00:00Z'],
+        ...ev(19, 'bob'),
+        ['me', '2026-02-01T00:00:00Z'],
+      ]);
+      expect(body.items[0].requested_at).toBe('2026-02-01T00:00:00Z');
+      expect(body.complete).toBe(true);
+    });
+
+    it('stays null and complete when the history was fully read', async () => {
+      const body = await run(ev(3, 'bob'));
+      expect(body.items[0].requested_at).toBeNull();
+      expect(body.complete).toBe(true);
+    });
+
+    it('is not cut when the total equals the bound', async () => {
+      const body = await run(ev(20, 'bob'));
+      expect(body.items[0].requested_at).toBeNull();
+      expect(body.complete).toBe(true);
+    });
   });
 
   it('does not cache a partial read: the next load re-reads and recovers', async () => {
