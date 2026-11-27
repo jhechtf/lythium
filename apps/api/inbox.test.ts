@@ -38,7 +38,10 @@ const json = (data: unknown, status = 200, headers: HeadersInit = {}) =>
 interface Call {
   url: string;
   auth: string | null;
-  variables?: { scope: string; match: string; hasMatch: boolean };
+  query: string;
+  variables?: { scope?: string; match: string; hasMatch?: boolean };
+  /** Warm `q` misses send only the hit search: no viewer or PR metadata. */
+  matchOnly: boolean;
 }
 let calls: Call[] = [];
 
@@ -76,6 +79,8 @@ const prNode = (p: FakePR) => ({
 function stubGithub(opts: {
   scope: FakePR[];
   matches?: FakePR[];
+  /** Hits per search string (`scope + q`); overrides `matches`. */
+  matchFn?: (match: string) => FakePR[];
   viewer?: string;
   /** Reported issueCount of the scope search. */
   scopeCount?: number;
@@ -94,16 +99,35 @@ function stubGithub(opts: {
       const url = String(input);
       const auth = new Headers(init?.headers).get('Authorization');
       const body = JSON.parse(String(init?.body ?? '{}')) as {
+        query?: string;
         variables?: Call['variables'];
       };
-      calls.push({ url, auth, variables: body.variables });
+      const query = body.query ?? '';
+      const matchOnly = /query InboxMatch/.test(query);
+      calls.push({ url, auth, query, variables: body.variables, matchOnly });
       if (opts.status)
         return json({ message: 'nope' }, opts.status, opts.headers);
       if (opts.noData) return json({ data: null, errors: opts.errors });
       const v = body.variables;
+      const hits = opts.matchFn
+        ? opts.matchFn(v?.match ?? '')
+        : (opts.matches ?? []);
+      const matchedData = {
+        matched: {
+          issueCount: opts.matchCount ?? hits.length,
+          nodes: hits.map((m) => ({
+            number: m.number,
+            repository: { nameWithOwner: m.repo },
+          })),
+        },
+      };
+      if (matchOnly)
+        return json({
+          data: matchedData,
+          ...(opts.errors ? { errors: opts.errors } : {}),
+        });
       const scopeNodes: unknown[] = opts.scope.map(prNode);
       if (opts.nullNodeAt !== undefined) scopeNodes[opts.nullNodeAt] = null;
-      const matches = opts.matches ?? [];
       return json({
         data: {
           viewer: { login: opts.viewer ?? 'me' },
@@ -116,17 +140,7 @@ function stubGithub(opts: {
             issueCount: opts.scopeCount ?? opts.scope.length,
             nodes: scopeNodes,
           },
-          ...(v?.hasMatch
-            ? {
-                matched: {
-                  issueCount: opts.matchCount ?? matches.length,
-                  nodes: matches.map((m) => ({
-                    number: m.number,
-                    repository: { nameWithOwner: m.repo },
-                  })),
-                },
-              }
-            : {}),
+          ...(v?.hasMatch ? matchedData : {}),
         },
         ...(opts.errors ? { errors: opts.errors } : {}),
       });
@@ -657,6 +671,150 @@ describe('GET /inbox', () => {
     });
   });
 
+  describe('scope cached apart from q', () => {
+    const load = (token: string, q = '') =>
+      get(q ? `?q=${encodeURIComponent(q)}` : '', token);
+    const numbers = async (res: Response) =>
+      ((await res.json()) as InboxFlatResponse).items.map((i) => i.number);
+    const requests = async (fn: () => unknown) => {
+      const before = calls.length;
+      await fn();
+      return calls.length - before;
+    };
+    const heavy = /viewer|reviewThreads|latestOpinionatedReviews|timelineItems/;
+    const hits = (match: string): FakePR[] =>
+      match.endsWith(' a')
+        ? [sample[0], { repo: 'x/outside', number: 99 }]
+        : match.endsWith(' b')
+          ? [sample[1]]
+          : [];
+    afterEach(() => vi.useRealTimers());
+
+    it('empty → A → B → A → empty: one scope read, two light searches', async () => {
+      stubGithub({ scope: sample, matchFn: hits });
+      const all = await numbers(await load('t'));
+      expect(all).toHaveLength(sample.length);
+      // outside-scope hits are excluded by the intersection
+      expect(await numbers(await load('t', 'a'))).toEqual([sample[0].number]);
+      expect(await numbers(await load('t', 'b'))).toEqual([sample[1].number]);
+      expect(await numbers(await load('t', 'a'))).toEqual([sample[0].number]);
+      expect(await numbers(await load('t'))).toEqual(all);
+      expect(calls).toHaveLength(3);
+      expect(calls[0].matchOnly).toBe(false);
+      expect(calls[0].variables?.hasMatch).toBe(false);
+      for (const c of calls.slice(1)) {
+        expect(c.matchOnly).toBe(true);
+        expect(c.query).not.toMatch(heavy);
+        expect(c.query).toMatch(/search\(/);
+        expect(c.variables).toEqual({ match: expect.stringMatching(/ [ab]$/) });
+      }
+    });
+
+    it('cold q is one request; a different q then reads only hits', async () => {
+      stubGithub({ scope: sample, matchFn: hits });
+      await load('t', 'a');
+      expect(calls).toHaveLength(1);
+      expect(calls[0].matchOnly).toBe(false);
+      expect(calls[0].variables?.hasMatch).toBe(true);
+      expect(await numbers(await load('t', 'b'))).toEqual([sample[1].number]);
+      expect(calls).toHaveLength(2);
+      expect(calls[1].matchOnly).toBe(true);
+      // whole-scope counts are unchanged by q
+      const body = (await (await load('t', 'b')).json()) as InboxFlatResponse;
+      expect(body.counts.pending).toBe(sample.length);
+    });
+
+    it('q churn beyond the per-token cap does not re-read the scope', async () => {
+      stubGithub({ scope: sample, matchFn: hits });
+      await load('t');
+      for (let i = 0; i < 3 * INBOX_CACHE_PER_TOKEN_MAX; i++)
+        await load('t', `churn${i}`);
+      const before = calls.length;
+      await load('t');
+      expect(calls).toHaveLength(before);
+      expect(calls.filter((c) => !c.matchOnly)).toHaveLength(1);
+    });
+
+    it('does not slide the TTL, and a refreshed scope drops its matches', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      stubGithub({ scope: sample, matchFn: hits });
+      await load('t'); // scope expires at +30s
+      vi.advanceTimersByTime(20_000);
+      await load('t', 'a'); // match tied to that scope
+      vi.advanceTimersByTime(9_000);
+      expect(await requests(() => load('t', 'a'))).toBe(0);
+      expect(await requests(() => load('t'))).toBe(0);
+      vi.advanceTimersByTime(2_000); // 31s: reads above didn't extend anything
+      const before = calls.length;
+      await load('t');
+      expect(calls).toHaveLength(before + 1);
+      expect(calls[before].matchOnly).toBe(false);
+      // the old match must not compose with the new scope: re-read, lightly
+      await load('t', 'a');
+      expect(calls).toHaveLength(before + 2);
+      expect(calls[before + 1].matchOnly).toBe(true);
+    });
+
+    it('an expired scope is re-read in full even if a match is newer', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      stubGithub({ scope: sample, matchFn: hits });
+      await load('t');
+      vi.advanceTimersByTime(29_000);
+      await load('t', 'b');
+      vi.advanceTimersByTime(2_000);
+      const before = calls.length;
+      await load('t', 'b');
+      expect(calls).toHaveLength(before + 1);
+      expect(calls[before].matchOnly).toBe(false);
+    });
+
+    it('keeps tokens apart', async () => {
+      stubGithub({ scope: sample, matchFn: hits });
+      await load('one', 'a');
+      await load('two', 'a');
+      expect(calls).toHaveLength(2);
+      expect(calls.map((c) => c.auth)).toEqual(['Bearer one', 'Bearer two']);
+      expect(calls.every((c) => !c.matchOnly)).toBe(true);
+    });
+
+    it('a partial match does not taint the scope or later unfiltered loads', async () => {
+      stubGithub({ scope: sample, matchFn: hits });
+      await load('t');
+      stubGithub({ scope: sample, matchFn: hits, matchCount: 500 });
+      const q = (await (await load('t', 'a')).json()) as InboxFlatResponse;
+      expect(q.complete).toBe(false);
+      const plain = (await (await load('t')).json()) as InboxFlatResponse;
+      expect(plain.complete).toBe(true);
+      expect(calls).toHaveLength(2); // scope, then the one match read
+    });
+
+    it('does not cache a match read with errors, and recovers; scope stays warm', async () => {
+      stubGithub({ scope: sample, matchFn: hits });
+      await load('t');
+      stubGithub({
+        scope: sample,
+        matchFn: hits,
+        errors: [{ type: 'INTERNAL', message: 'x' }],
+      });
+      const failed = (await (await load('t', 'a')).json()) as InboxFlatResponse;
+      expect(failed.complete).toBe(false);
+      expect(await requests(() => load('t'))).toBe(0); // scope untouched
+      stubGithub({ scope: sample, matchFn: hits });
+      const ok = (await (await load('t', 'a')).json()) as InboxFlatResponse;
+      expect(ok.complete).toBe(true);
+      expect(await requests(() => load('t', 'a'))).toBe(0);
+    });
+
+    it('a failed match read is an error, not an empty result, and recovers', async () => {
+      stubGithub({ scope: sample, matchFn: hits });
+      await load('t');
+      stubGithub({ scope: sample, noData: true, errors: [{ type: 'X' }] });
+      expect((await load('t', 'a')).status).toBe(502);
+      stubGithub({ scope: sample, matchFn: hits });
+      expect(await numbers(await load('t', 'a'))).toEqual([sample[0].number]);
+    });
+  });
+
   it('does not cache a partial read: the next load re-reads and recovers', async () => {
     const flaky: FakePR = {
       repo: 'o/a',
@@ -799,12 +957,17 @@ describe('GET /inbox', () => {
       stubGithub({ scope: sample, matches: [sample[0]] });
       await load('victim');
       for (let i = 0; i < 40; i++) await load('noisy', `churn${i}`);
-      expect(inboxCacheSize()).toBe(1 + INBOX_CACHE_PER_TOKEN_MAX);
+      // victim: scope; noisy: its scope + the newest INBOX_CACHE_PER_TOKEN_MAX
+      expect(inboxCacheSize()).toBe(1 + 1 + INBOX_CACHE_PER_TOKEN_MAX);
       // the other caller's entry survived the churn
       expect(await requests(() => load('victim'))).toBe(0);
-      // the noisy token's most recent queries are still warm, older ones gone
+      // the noisy token's most recent queries are still warm, older ones are
+      // one lightweight search, and its scope was never re-read
       expect(await requests(() => load('noisy', 'churn39'))).toBe(0);
+      const before = calls.length;
       expect(await requests(() => load('noisy', 'churn0'))).toBe(1);
+      expect(calls[before].matchOnly).toBe(true);
+      expect(await requests(() => load('noisy'))).toBe(0);
     });
 
     it('bounds the whole cache across many tokens', async () => {
@@ -818,18 +981,20 @@ describe('GET /inbox', () => {
 
     it('does not evict an unrelated entry when a key is overwritten at capacity', async () => {
       stubGithub({ scope: sample });
-      const per = INBOX_CACHE_PER_TOKEN_MAX;
-      const tokens = INBOX_CACHE_MAX / per;
+      // 40 tokens × (scope + 4 queries) fill the cache exactly
+      const per = 4;
+      const tokens = INBOX_CACHE_MAX / (1 + per);
       for (let t = 0; t < tokens; t++)
         for (let i = 0; i < per; i++) await load(`full${t}`, `q${i}`);
       expect(inboxCacheSize()).toBe(INBOX_CACHE_MAX);
       // two concurrent cold loads of the same new key: the second write
-      // overwrites the first and must not push anything else out
+      // overwrites the first and must not push anything else out. The new
+      // token takes two entries (scope + query), so exactly two old ones go.
       await Promise.all([load('fresh', 'x'), load('fresh', 'x')]);
       expect(inboxCacheSize()).toBe(INBOX_CACHE_MAX);
-      // exactly one old entry made room: the oldest token's oldest query
-      expect(await requests(() => load('full0', 'q1'))).toBe(0);
-      expect(await requests(() => load(`full${tokens - 1}`, 'q4'))).toBe(0);
+      // the oldest token lost its two oldest queries, nothing else changed
+      expect(await requests(() => load('full0', 'q2'))).toBe(0);
+      expect(await requests(() => load(`full${tokens - 1}`, 'q3'))).toBe(0);
       expect(await requests(() => load('full0', 'q0'))).toBe(1);
     });
 

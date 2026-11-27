@@ -67,6 +67,9 @@ const SCOPE_BREAKING =
 const hasOperator = (q: string) =>
   /(^|\s)(OR|AND|NOT)(\s|$)/.test(q) || /[()]/.test(q);
 
+const MATCHED_FIELDS = `issueCount
+    nodes { ... on PullRequest { number repository { nameWithOwner } } }`;
+
 // `latestOpinionatedReviews`: each reviewer's latest APPROVED / CHANGES_REQUESTED
 // / DISMISSED review, so a later COMMENTED review doesn't erase a decision and
 // a dismissed one no longer counts.
@@ -106,8 +109,14 @@ export const INBOX_QUERY = `query Inbox($scope: String!, $match: String!, $hasMa
     }
   }
   matched: search(query: $match, type: ISSUE, first: ${MAX_CANDIDATES}) @include(if: $hasMatch) {
-    issueCount
-    nodes { ... on PullRequest { number repository { nameWithOwner } } }
+    ${MATCHED_FIELDS}
+  }
+}`;
+
+/** A `q` miss with a warm scope reads only the hits: no per-PR metadata. */
+export const MATCH_QUERY = `query InboxMatch($match: String!) {
+  matched: search(query: $match, type: ISSUE, first: ${MAX_CANDIDATES}) {
+    ${MATCHED_FIELDS}
   }
 }`;
 
@@ -121,74 +130,133 @@ export const inboxRequest = (q: string) => ({
   },
 });
 
-// Cache of fully-read inboxes: SHA-256 of the token (never the token) → `q` →
-// entry, so one caller can't be served another's results. Policy:
-// - at most INBOX_CACHE_PER_TOKEN_MAX entries per token (oldest-used goes), so
-//   one token churning through `q` values only evicts its own entries;
-// - at most INBOX_CACHE_MAX entries overall; a NEW key at the limit first
-//   drops expired entries, then the oldest entry of the least recently used
-//   token. Replacing an existing key never evicts anything else.
-// Map order = recency. In memory, per isolate/process.
-interface CacheEntry {
-  value: Snapshot;
-  expires: number;
+// Cache of error-free reads: SHA-256 of the token (never the token) → entry,
+// so one caller can't be served another's results. A token holds
+// - one `scope` read (the enriched PRs, independent of `q`), and
+// - up to INBOX_CACHE_PER_TOKEN_MAX `q` → match entries (just the hit keys),
+//   each tied to the scope read it was made against: when that scope is
+//   refreshed, evicted or expired its matches stop applying and are dropped.
+// So `q` churn re-reads only the cheap hit lists, never the whole inbox.
+// Entries expire INBOX_CACHE_TTL_MS after they were read (a hit doesn't
+// extend that). At most INBOX_CACHE_MAX entries overall; room for a NEW entry
+// drops expired entries, then the oldest match of the least recently used
+// other token (its scope once it has none). Replacing an entry evicts nothing
+// else. Map order = recency. In memory, per isolate/process.
+interface ScopeSnap {
+  viewer: string;
+  items: Snapshot['items'];
+  /** More matches than were read, a node was unreadable, or a list was cut. */
+  partial: boolean;
 }
-const cache = new Map<string, Map<string, CacheEntry>>();
+interface MatchSnap {
+  keys: Set<string>;
+  /** More hits than were read, or a hit was unreadable. */
+  partial: boolean;
+}
+interface TokenCache {
+  scope?: { value: ScopeSnap; expires: number };
+  matches: Map<string, MatchSnap & { scope: ScopeSnap; expires: number }>;
+}
+const cache = new Map<string, TokenCache>();
 
 /** Tests: forget cached inbox reads. */
 export function clearInboxCache() {
   cache.clear();
 }
 
+const sizeOf = (tc: TokenCache) => (tc.scope ? 1 : 0) + tc.matches.size;
+
 /** Tests: number of cached entries across all tokens. */
 export function inboxCacheSize() {
   let n = 0;
-  for (const m of cache.values()) n += m.size;
+  for (const tc of cache.values()) n += sizeOf(tc);
   return n;
 }
 
-function cacheGet(token: string, q: string): Snapshot | undefined {
-  const m = cache.get(token);
-  const hit = m?.get(q);
-  if (!m || !hit) return undefined;
-  m.delete(q);
-  if (hit.expires <= Date.now()) {
-    if (m.size === 0) cache.delete(token);
-    return undefined;
-  }
-  m.set(q, hit); // most recently used
+const touch = (token: string, tc: TokenCache) => {
   cache.delete(token);
-  cache.set(token, m); // and its token
-  return hit.value;
+  cache.set(token, tc); // token becomes most recently used
+};
+
+function dropExpired(token: string, tc: TokenCache, now: number) {
+  if (tc.scope && tc.scope.expires <= now) {
+    tc.scope = undefined;
+    tc.matches.clear(); // matches of a gone scope no longer apply
+  }
+  for (const [q, e] of tc.matches) if (e.expires <= now) tc.matches.delete(q);
+  if (sizeOf(tc) === 0) cache.delete(token);
 }
 
-function evictForNewEntry() {
-  const now = Date.now();
-  for (const [t, m] of cache) {
-    for (const [q, e] of m) if (e.expires <= now) m.delete(q);
-    if (m.size === 0) cache.delete(t);
-  }
+function makeRoom(except: string) {
   if (inboxCacheSize() < INBOX_CACHE_MAX) return;
-  const [t, m] = cache.entries().next().value ?? [];
-  if (!t || !m) return;
-  const oldest = m.keys().next().value;
-  if (oldest !== undefined) m.delete(oldest);
-  if (m.size === 0) cache.delete(t);
+  const now = Date.now();
+  for (const [t, tc] of cache) dropExpired(t, tc, now);
+  if (inboxCacheSize() < INBOX_CACHE_MAX) return;
+  for (const [t, tc] of cache) {
+    if (t === except) continue;
+    const oldest = tc.matches.keys().next().value;
+    if (oldest !== undefined) tc.matches.delete(oldest);
+    else cache.delete(t); // only its scope was left
+    return;
+  }
 }
 
-function cacheSet(token: string, q: string, value: Snapshot) {
-  const m = cache.get(token) ?? new Map<string, CacheEntry>();
-  if (m.has(q)) m.delete(q);
+function cacheGetScope(token: string): ScopeSnap | undefined {
+  const tc = cache.get(token);
+  if (!tc) return undefined;
+  dropExpired(token, tc, Date.now());
+  if (!tc.scope) return undefined;
+  touch(token, tc);
+  return tc.scope.value;
+}
+
+function cacheGetMatch(
+  token: string,
+  q: string,
+  scope: ScopeSnap,
+): MatchSnap | undefined {
+  const tc = cache.get(token);
+  const hit = tc?.matches.get(q);
+  if (!tc || !hit) return undefined;
+  tc.matches.delete(q);
+  if (hit.scope !== scope || hit.expires <= Date.now()) return undefined;
+  tc.matches.set(q, hit); // most recently used
+  touch(token, tc);
+  return hit;
+}
+
+function cacheSetScope(token: string, value: ScopeSnap) {
+  const tc: TokenCache = cache.get(token) ?? { matches: new Map() };
+  tc.matches.clear(); // they were made against the old scope
+  if (!tc.scope) makeRoom(token);
+  tc.scope = { value, expires: Date.now() + INBOX_CACHE_TTL_MS };
+  touch(token, tc);
+}
+
+function cacheSetMatch(
+  token: string,
+  q: string,
+  scope: ScopeSnap,
+  match: MatchSnap,
+) {
+  const tc = cache.get(token);
+  // Only against the scope still cached: an older generation can't compose.
+  if (!tc || tc.scope?.value !== scope) return;
+  if (tc.matches.has(q)) tc.matches.delete(q);
   else {
-    if (m.size >= INBOX_CACHE_PER_TOKEN_MAX) {
-      const oldest = m.keys().next().value;
-      if (oldest !== undefined) m.delete(oldest);
+    if (tc.matches.size >= INBOX_CACHE_PER_TOKEN_MAX) {
+      const oldest = tc.matches.keys().next().value;
+      if (oldest !== undefined) tc.matches.delete(oldest);
     }
-    if (inboxCacheSize() >= INBOX_CACHE_MAX) evictForNewEntry();
+    makeRoom(token);
+    if (tc.scope?.value !== scope) return;
   }
-  m.set(q, { value, expires: Date.now() + INBOX_CACHE_TTL_MS });
-  cache.delete(token);
-  cache.set(token, m); // token becomes most recently used
+  tc.matches.set(q, {
+    ...match,
+    scope,
+    expires: Math.min(Date.now() + INBOX_CACHE_TTL_MS, tc.scope.expires),
+  });
+  touch(token, tc);
 }
 
 type Enriched = Omit<InboxItem, 'repository' | 'number'>;
@@ -301,34 +369,27 @@ function parsePR(
   };
 }
 
-/**
- * One GraphQL request for the whole inbox. A response with errors but data is
- * usable but partial: it is flagged and never cached, so the next load
- * re-reads it.
- */
-async function loadInbox(
-  token: string,
-  q: string,
-): Promise<
-  { ok: true; snapshot: Snapshot } | { ok: false; result: FetchResult }
-> {
-  const hashed = await tokenHash(token);
-  const cached = cacheGet(hashed, q);
-  if (cached) return { ok: true, snapshot: cached };
+type Loaded =
+  | { ok: true; snapshot: Snapshot }
+  | { ok: false; result: FetchResult };
 
-  const req = inboxRequest(q);
-  const res = await githubGraphQL(token, req.query, req.variables);
-  if (!res.ok) return res;
+const compose = (scope: ScopeSnap, match: MatchSnap | null): Snapshot => ({
+  viewer: scope.viewer,
+  items: scope.items,
+  matchedKeys: match?.keys ?? null,
+  partial: scope.partial || (match?.partial ?? false),
+});
 
-  const login = obj(res.data.viewer)?.login;
-  const scope = obj(res.data.scope);
-  if (typeof login !== 'string' || !scope) {
-    // Not a readable inbox: fail rather than look like an empty one.
-    return { ok: false, result: failure(502) };
-  }
+function parseScope(
+  data: Record<string, unknown>,
+  hadErrors: boolean,
+): ScopeSnap | null {
+  const login = obj(data.viewer)?.login;
+  const scope = obj(data.scope);
+  if (typeof login !== 'string' || !scope) return null;
   const nodes = list(scope.nodes);
   const items: Snapshot['items'] = [];
-  let partial = res.errors.length > 0 || num(scope.issueCount) > nodes.length;
+  let partial = hadErrors || num(scope.issueCount) > nodes.length;
   for (const node of nodes) {
     const pr = parsePR(node, login);
     if (!pr) partial = true;
@@ -337,26 +398,69 @@ async function loadInbox(
       if (pr.truncated) partial = true;
     }
   }
+  return { viewer: login, items, partial };
+}
 
-  let matchedKeys: Set<string> | null = null;
-  if (q) {
-    const matched = obj(res.data.matched);
-    if (!matched) return { ok: false, result: failure(502) };
-    const mNodes = list(matched.nodes);
-    matchedKeys = new Set();
-    for (const node of mNodes) {
-      const n = obj(node);
-      const repo = obj(n?.repository)?.nameWithOwner;
-      if (typeof repo === 'string' && typeof n?.number === 'number')
-        matchedKeys.add(keyOf({ repository: repo, number: n.number }));
-      else partial = true;
-    }
-    if (num(matched.issueCount) > mNodes.length) partial = true;
+function parseMatch(data: unknown, hadErrors: boolean): MatchSnap | null {
+  const matched = obj(data);
+  if (!matched) return null;
+  const nodes = list(matched.nodes);
+  const keys = new Set<string>();
+  let partial = hadErrors || num(matched.issueCount) > nodes.length;
+  for (const node of nodes) {
+    const n = obj(node);
+    const repo = obj(n?.repository)?.nameWithOwner;
+    if (typeof repo === 'string' && typeof n?.number === 'number')
+      keys.add(keyOf({ repository: repo, number: n.number }));
+    else partial = true;
+  }
+  return { keys, partial };
+}
+
+/**
+ * The inbox for a `q`. The enriched scope read is cached per token regardless
+ * of `q`; a `q` miss with a warm scope reads only the hit list. A cold read is
+ * one request. A response with errors but data is usable but partial: it is
+ * flagged and never cached, so the next load re-reads it. Scope and match
+ * completeness are independent: a partial match never taints the scope.
+ */
+async function loadInbox(token: string, q: string): Promise<Loaded> {
+  const hashed = await tokenHash(token);
+  const cachedScope = cacheGetScope(hashed);
+
+  if (cachedScope) {
+    if (!q) return { ok: true, snapshot: compose(cachedScope, null) };
+    const hit = cacheGetMatch(hashed, q, cachedScope);
+    if (hit) return { ok: true, snapshot: compose(cachedScope, hit) };
+    const res = await githubGraphQL(token, MATCH_QUERY, {
+      match: `${SCOPE} ${q}`,
+    });
+    if (!res.ok) return res;
+    const match = parseMatch(res.data.matched, res.errors.length > 0);
+    if (!match) return { ok: false, result: failure(502) };
+    if (res.errors.length === 0) cacheSetMatch(hashed, q, cachedScope, match);
+    return { ok: true, snapshot: compose(cachedScope, match) };
   }
 
-  const snapshot: Snapshot = { viewer: login, items, matchedKeys, partial };
-  if (res.errors.length === 0) cacheSet(hashed, q, snapshot);
-  return { ok: true, snapshot };
+  const req = inboxRequest(q);
+  const res = await githubGraphQL(token, req.query, req.variables);
+  if (!res.ok) return res;
+  const hadErrors = res.errors.length > 0;
+  const scope = parseScope(res.data, hadErrors);
+  if (!scope) {
+    // Not a readable inbox: fail rather than look like an empty one.
+    return { ok: false, result: failure(502) };
+  }
+  let match: MatchSnap | null = null;
+  if (q) {
+    match = parseMatch(res.data.matched, hadErrors);
+    if (!match) return { ok: false, result: failure(502) };
+  }
+  if (!hadErrors) {
+    cacheSetScope(hashed, scope);
+    if (match) cacheSetMatch(hashed, q, scope, match);
+  }
+  return { ok: true, snapshot: compose(scope, match) };
 }
 
 const failure = (status: number): FetchResult => ({
