@@ -48,7 +48,9 @@ const REQUEST_EVENTS_BOUND = 20;
 
 // Only a fully-read response is cached; this also bounds how stale it gets.
 export const INBOX_CACHE_TTL_MS = 30_000;
-const INBOX_CACHE_MAX = 200;
+export const INBOX_CACHE_MAX = 200;
+// Distinct `q` values one token may keep cached at once.
+export const INBOX_CACHE_PER_TOKEN_MAX = 5;
 
 const STATUSES: readonly InboxStatus[] = [
   'open',
@@ -107,29 +109,72 @@ const QUERY = `query Inbox($scope: String!, $match: String!, $hasMatch: Boolean!
   }
 }`;
 
-// Cached per SHA-256 of the token (never the token), so one caller can't be
-// served another's results. Map order = insertion order.
-const cache = new Map<string, { value: Snapshot; expires: number }>();
+// Cache of fully-read inboxes: SHA-256 of the token (never the token) → `q` →
+// entry, so one caller can't be served another's results. Policy:
+// - at most INBOX_CACHE_PER_TOKEN_MAX entries per token (oldest-used goes), so
+//   one token churning through `q` values only evicts its own entries;
+// - at most INBOX_CACHE_MAX entries overall; a NEW key at the limit first
+//   drops expired entries, then the oldest entry of the least recently used
+//   token. Replacing an existing key never evicts anything else.
+// Map order = recency. In memory, per isolate/process.
+interface CacheEntry {
+  value: Snapshot;
+  expires: number;
+}
+const cache = new Map<string, Map<string, CacheEntry>>();
 
 /** Tests: forget cached inbox reads. */
 export function clearInboxCache() {
   cache.clear();
 }
 
-function cacheGet(key: string): Snapshot | undefined {
-  const hit = cache.get(key);
-  if (!hit) return undefined;
-  if (hit.expires > Date.now()) return hit.value;
-  cache.delete(key);
-  return undefined;
+/** Tests: number of cached entries across all tokens. */
+export function inboxCacheSize() {
+  let n = 0;
+  for (const m of cache.values()) n += m.size;
+  return n;
 }
 
-function cacheSet(key: string, value: Snapshot) {
-  if (cache.size >= INBOX_CACHE_MAX) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
+function cacheGet(token: string, q: string): Snapshot | undefined {
+  const m = cache.get(token);
+  const hit = m?.get(q);
+  if (!m || !hit) return undefined;
+  m.delete(q);
+  if (hit.expires <= Date.now()) {
+    if (m.size === 0) cache.delete(token);
+    return undefined;
   }
-  cache.set(key, { value, expires: Date.now() + INBOX_CACHE_TTL_MS });
+  m.set(q, hit); // most recently used
+  return hit.value;
+}
+
+function evictForNewEntry() {
+  const now = Date.now();
+  for (const [t, m] of cache) {
+    for (const [q, e] of m) if (e.expires <= now) m.delete(q);
+    if (m.size === 0) cache.delete(t);
+  }
+  if (inboxCacheSize() < INBOX_CACHE_MAX) return;
+  const [t, m] = cache.entries().next().value ?? [];
+  if (!t || !m) return;
+  const oldest = m.keys().next().value;
+  if (oldest !== undefined) m.delete(oldest);
+  if (m.size === 0) cache.delete(t);
+}
+
+function cacheSet(token: string, q: string, value: Snapshot) {
+  const m = cache.get(token) ?? new Map<string, CacheEntry>();
+  if (m.has(q)) m.delete(q);
+  else {
+    if (m.size >= INBOX_CACHE_PER_TOKEN_MAX) {
+      const oldest = m.keys().next().value;
+      if (oldest !== undefined) m.delete(oldest);
+    }
+    if (inboxCacheSize() >= INBOX_CACHE_MAX) evictForNewEntry();
+  }
+  m.set(q, { value, expires: Date.now() + INBOX_CACHE_TTL_MS });
+  cache.delete(token);
+  cache.set(token, m); // token becomes most recently used
 }
 
 type Enriched = Omit<InboxItem, 'repository' | 'number'>;
@@ -245,8 +290,8 @@ async function loadInbox(
 ): Promise<
   { ok: true; snapshot: Snapshot } | { ok: false; result: FetchResult }
 > {
-  const key = `${await tokenHash(token)}:${q}`;
-  const cached = cacheGet(key);
+  const hashed = await tokenHash(token);
+  const cached = cacheGet(hashed, q);
   if (cached) return { ok: true, snapshot: cached };
 
   const res = await githubGraphQL(token, QUERY, {
@@ -291,7 +336,7 @@ async function loadInbox(
   }
 
   const snapshot: Snapshot = { viewer: login, items, matchedKeys, partial };
-  if (res.errors.length === 0) cacheSet(key, snapshot);
+  if (res.errors.length === 0) cacheSet(hashed, q, snapshot);
   return { ok: true, snapshot };
 }
 

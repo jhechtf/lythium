@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { app } from './app.ts';
 import {
   clearInboxCache,
+  INBOX_CACHE_MAX,
+  INBOX_CACHE_PER_TOKEN_MAX,
+  INBOX_CACHE_TTL_MS,
+  inboxCacheSize,
   inboxStatuses,
   latestRequestTo,
   MAX_CANDIDATES,
@@ -631,6 +635,76 @@ describe('GET /inbox', () => {
     expect(calls).toHaveLength(1);
     await get();
     expect(calls).toHaveLength(1);
+  });
+
+  describe('cache bounds', () => {
+    const load = (token: string, q = '') =>
+      get(q ? `?q=${encodeURIComponent(q)}` : '', token);
+    const requests = async (fn: () => unknown) => {
+      const before = calls.length;
+      await fn();
+      return calls.length - before;
+    };
+    afterEach(() => vi.useRealTimers());
+
+    it("keeps one token's query churn within its own cap", async () => {
+      stubGithub({ scope: sample, matches: [sample[0]] });
+      await load('victim');
+      for (let i = 0; i < 40; i++) await load('noisy', `churn${i}`);
+      expect(inboxCacheSize()).toBe(1 + INBOX_CACHE_PER_TOKEN_MAX);
+      // the other caller's entry survived the churn
+      expect(await requests(() => load('victim'))).toBe(0);
+      // the noisy token's most recent queries are still warm, older ones gone
+      expect(await requests(() => load('noisy', 'churn39'))).toBe(0);
+      expect(await requests(() => load('noisy', 'churn0'))).toBe(1);
+    });
+
+    it('bounds the whole cache across many tokens', async () => {
+      stubGithub({ scope: sample });
+      for (let i = 0; i < INBOX_CACHE_MAX + 50; i++) await load(`tok${i}`);
+      expect(inboxCacheSize()).toBe(INBOX_CACHE_MAX);
+      // oldest tokens went first, newest are warm
+      expect(await requests(() => load(`tok${INBOX_CACHE_MAX + 49}`))).toBe(0);
+      expect(await requests(() => load('tok0'))).toBe(1);
+    });
+
+    it('does not evict an unrelated entry when a key is overwritten at capacity', async () => {
+      stubGithub({ scope: sample });
+      const per = INBOX_CACHE_PER_TOKEN_MAX;
+      const tokens = INBOX_CACHE_MAX / per;
+      for (let t = 0; t < tokens; t++)
+        for (let i = 0; i < per; i++) await load(`full${t}`, `q${i}`);
+      expect(inboxCacheSize()).toBe(INBOX_CACHE_MAX);
+      // two concurrent cold loads of the same new key: the second write
+      // overwrites the first and must not push anything else out
+      await Promise.all([load('fresh', 'x'), load('fresh', 'x')]);
+      expect(inboxCacheSize()).toBe(INBOX_CACHE_MAX);
+      // exactly one old entry made room: the oldest token's oldest query
+      expect(await requests(() => load('full0', 'q1'))).toBe(0);
+      expect(await requests(() => load(`full${tokens - 1}`, 'q4'))).toBe(0);
+      expect(await requests(() => load('full0', 'q0'))).toBe(1);
+    });
+
+    it('expires entries after the TTL and serves warm ones before it', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      stubGithub({ scope: sample });
+      await load('t');
+      vi.advanceTimersByTime(INBOX_CACHE_TTL_MS - 1);
+      expect(await requests(() => load('t'))).toBe(0);
+      vi.advanceTimersByTime(2);
+      expect(await requests(() => load('t'))).toBe(1);
+      expect(inboxCacheSize()).toBe(1);
+    });
+
+    it('drops expired entries before evicting live ones at capacity', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      stubGithub({ scope: sample });
+      for (let i = 0; i < INBOX_CACHE_MAX; i++) await load(`old${i}`);
+      vi.advanceTimersByTime(INBOX_CACHE_TTL_MS + 1);
+      await load('live1');
+      await load('live2');
+      expect(inboxCacheSize()).toBe(2);
+    });
   });
 
   it('returns an empty inbox', async () => {
