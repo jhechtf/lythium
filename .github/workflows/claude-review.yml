@@ -90,6 +90,8 @@ jobs:
           anthropic_workspace_id: wrkspc_01AKArW7XDKiWjqo71i6RJkJ
           # No progress/tracking comment: findings live only in inline comments.
           track_progress: false
+          # Allow Linear's agent bot to author PRs that get reviewed. Exact match; all other bots stay denied.
+          allowed_bots: 'linear-code[bot]'
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
