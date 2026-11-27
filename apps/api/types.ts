@@ -373,3 +373,95 @@ export interface GenerateGroupsResponse {
   /** True when this is a stored preview for the same head sha and settings. */
   cached: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Review inbox (LYT-59)
+// ---------------------------------------------------------------------------
+
+/**
+ * Review status of an inbox PR, from GitHub's reviews (not the caller's own).
+ * `approved` and `changes_requested` come from each reviewer's latest
+ * effective decision and can both hold at once. `open` means no reviewer has
+ * decided yet.
+ */
+export type InboxStatus = 'open' | 'changes_requested' | 'approved';
+
+export type InboxGroupBy = 'none' | 'repository';
+
+export interface InboxItem {
+  /** `owner/name`, as GitHub spells it. */
+  repository: string;
+  number: number;
+  title: string;
+  html_url: string;
+  author: string | null;
+  /** Never empty: `['open']` when nobody has decided, else the decisions held. */
+  statuses: InboxStatus[];
+  /** Issue comments plus inline review comments. */
+  comments: number;
+  additions: number;
+  deletions: number;
+  /** Latest time review was requested from the caller; null when unknown. */
+  requested_at: string | null;
+}
+
+export interface InboxRepository {
+  name: string;
+  /** PRs awaiting the caller's review in this repository. */
+  count: number;
+}
+
+export interface InboxGroup {
+  repository: string;
+  items: InboxItem[];
+}
+
+export interface InboxCounts {
+  /** "N reviews pending": every PR awaiting the caller's review. */
+  pending: number;
+  /** PRs holding each status (they overlap, so they can sum past `pending`). */
+  status: Record<InboxStatus, number>;
+}
+
+export interface InboxPagination {
+  page: number;
+  per_page: number;
+  /** PRs matching the filters, across all pages. */
+  total: number;
+  total_pages: number;
+}
+
+interface InboxResponseBase {
+  /**
+   * Always the whole inbox, ignoring `status`, `repo`, `q` and the page, so
+   * the filter chips and the sidebar don't shift as filters change.
+   */
+  counts: InboxCounts;
+  repositories: InboxRepository[];
+  /** The filtered PRs (`total`) and the page requested. */
+  pagination: InboxPagination;
+  /**
+   * False when the inbox is known to be partial: more than the API reads
+   * (100 PRs), GitHub flagged the search incomplete, or a PR couldn't be read.
+   * Counts then cover what was read.
+   */
+  complete: boolean;
+}
+
+/**
+ * Items are ordered by `requested_at` (newest first, unknown last), then
+ * repository (case-insensitive), then PR number (descending). Pages are cut
+ * from that order before grouping.
+ */
+export interface InboxFlatResponse extends InboxResponseBase {
+  group_by: 'none';
+  items: InboxItem[];
+}
+
+/** The same page as the flat response, grouped; groups in order of first item. */
+export interface InboxGroupedResponse extends InboxResponseBase {
+  group_by: 'repository';
+  groups: InboxGroup[];
+}
+
+export type InboxResponse = InboxFlatResponse | InboxGroupedResponse;

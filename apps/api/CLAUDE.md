@@ -26,6 +26,7 @@ GET /repos/:source/:owner/:repo/pr/:pr_number/diff
 GET /repos/:source/:owner/:repo/pr/:pr_number        # PR details + merge status (pr-details.ts)
 GET /repos/:source/:owner/:repo/pr/:pr_number/checks # CI state, counts and per-check detail (checks.ts)
 POST /repos/:source/:owner/:repo/pr/:pr_number/reviews # submit a review (pr-review.ts)
+GET /inbox                                           # PRs awaiting my review (inbox.ts)
 
 # Guided review (review-groups.ts; needs DATABASE_URL, else 503)
 GET    /repos/:source/:owner/:repo/pr/:pr_number/groups            # groups + unassigned files
@@ -121,3 +122,15 @@ Migrations: `pnpm --filter @lythium/db generate` after a schema change, `DB_URL=
 # Types contract
 
 `types.ts` (`GitHubRef`, `DiffFile`, `StackPR`, `StackDiff`, `StackItem`, `StackDiffResponse`, and the guided-review request/response types such as `ReviewGroup`, `ReviewGroupsResponse` `ReviewProgressResponse` and `GenerateGroupsResponse`) is imported by the web app as `@lythium/api/types` (see `package.json` `exports`). Any change to these shapes is a breaking change for `apps/web` — update both sides together.
+
+# Review inbox (LYT-59)
+
+`GET /inbox?status=&repo=&q=&group_by=none|repository&page=&per_page=` (`inbox.ts`). Caller token only; no database.
+
+- **Candidates**: GitHub search `is:pr is:open archived:false review-requested:@me`, one page (100 PRs max). More matches than that, `incomplete_results`, or a PR that 404s on read → `complete: false`.
+- **`q`** is GitHub search syntax, run as a second search (scope + q) and intersected with the scope search, so it can only narrow. `OR`/`AND`/`NOT`, parentheses and the `is:`/`type:`/`state:`/`archived:`/review qualifiers → 400.
+- **Statuses** (`open`, `changes_requested`, `approved`) come from each reviewer's latest effective decision (`mapReviewers` without the re-request override); a PR can hold both decisions. `open` = no decisions.
+- **Counts, `pending` and `repositories`** cover the whole inbox, ignoring filters and page. `pagination.total` is the filtered set.
+- **Order**: `requested_at` desc (nulls last), repo, number desc; paginate, then group (groups ordered by first item).
+- **Enrichment** per PR: details (diff stats, `comments + review_comments`), reviews, timeline (latest `review_requested` to the viewer; null when unavailable, never a fallback timestamp). Timeline failure degrades to null; other failures map via `upstreamError`. 8 PRs at a time.
+- **Caches** (in memory, keyed by SHA-256 of the token): search 30s, per-PR enrichment 5 min keyed by the search hit's `updated_at`.
