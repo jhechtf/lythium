@@ -77,15 +77,15 @@ export function prHref(repository: string, number: number): string {
   return `/pr/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/${number}`;
 }
 
-const UNITS: [limit: number, seconds: number, unit: string][] = [
-  [60, 1, 'second'],
-  [3600, 60, 'minute'],
-  [86400, 3600, 'hour'],
-  [86400 * 30, 86400, 'day'],
-  [86400 * 365, 86400 * 30, 'month'],
+const UNITS: [limit: number, seconds: number, suffix: string][] = [
+  [60, 1, 's'],
+  [3600, 60, 'm'],
+  [86400, 3600, 'h'],
+  [86400 * 30, 86400, 'd'],
+  [86400 * 365, 86400 * 30, 'mo'],
 ];
 
-/** "3 hours ago" for an ISO timestamp; null when it is missing or invalid. */
+/** Compact age like the design mocks ("2h ago"); null when missing or invalid. */
 export function relativeTime(
   iso: string | null,
   now: number = Date.now(),
@@ -94,16 +94,11 @@ export function relativeTime(
   const then = Date.parse(iso);
   if (Number.isNaN(then)) return null;
   const diff = Math.max(0, Math.round((now - then) / 1000));
-  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
-  for (const [limit, seconds, unit] of UNITS) {
-    if (diff < limit) {
-      return rtf.format(
-        -Math.floor(diff / seconds),
-        unit as Intl.RelativeTimeFormatUnit,
-      );
-    }
+  if (diff < 1) return 'just now';
+  for (const [limit, seconds, suffix] of UNITS) {
+    if (diff < limit) return `${Math.floor(diff / seconds)}${suffix} ago`;
   }
-  return rtf.format(-Math.floor(diff / (86400 * 365)), 'year');
+  return `${Math.floor(diff / (86400 * 365))}y ago`;
 }
 
 /** What went wrong loading the inbox, safe to show to the user. */

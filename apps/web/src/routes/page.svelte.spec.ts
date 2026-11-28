@@ -1,6 +1,6 @@
 import type { InboxItem } from '@lythium/api/types';
 import type { ComponentProps } from 'svelte';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import { parseInboxQuery } from '#lib/inbox.ts';
@@ -68,7 +68,7 @@ describe('/+page.svelte', () => {
       .element(page.getByText('Changes requested').first())
       .toBeVisible();
     await expect.element(page.getByText('+10').first()).toBeVisible();
-    await expect.element(page.getByText('3 hours ago')).toBeVisible();
+    await expect.element(page.getByText('3h ago')).toBeVisible();
     await expect.element(page.getByText('Unknown author')).toBeVisible();
     await expect
       .element(page.getByText('Requested time unknown'))
@@ -171,30 +171,134 @@ describe('/+page.svelte', () => {
       .element(page.getByRole('searchbox', { name: 'Search reviews' }))
       .toHaveValue('bug');
   });
-  it('styles headings and the search button without !important overrides', async () => {
-    render(Page, { data: make('', flat([item()])) });
-    const px = (el: Element | null) =>
-      el ? getComputedStyle(el).fontSize : null;
-    expect(
-      px(page.getByRole('heading', { name: 'Inbox', level: 1 }).element()),
-    ).toBe('20px');
-    expect(
-      px(
-        page
-          .getByRole('heading', { name: 'Reviews requested of you' })
-          .element(),
-      ),
-    ).toBe('20px');
-    expect(
-      px(page.getByRole('heading', { name: 'Repositories' }).element()),
-    ).toBe('12px');
-    const probe = document.createElement('div');
-    probe.style.borderRadius = 'var(--radius-md)';
-    document.body.append(probe);
-    const radius = getComputedStyle(probe).borderRadius;
-    probe.remove();
-    const btn = page.getByRole('button', { name: 'Search' }).element();
-    expect(radius).not.toBe('');
-    expect(getComputedStyle(btn).borderRadius).toBe(radius);
+  describe('design tokens (Figma Review Inbox, dark)', () => {
+    const ctx = document.createElement('canvas').getContext('2d', {
+      willReadFrequently: true,
+    }) as CanvasRenderingContext2D;
+    /** Computed value, with any colour normalised to `rgb(r, g, b)`. */
+    const css = (el: Element, prop: string) => {
+      const v = getComputedStyle(el).getPropertyValue(prop);
+      if (!/^(oklch|oklab|color|rgb|lab|lch)\(/.test(v)) return v;
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = v;
+      ctx.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+      return a === 0 ? 'transparent' : `rgb(${r}, ${g}, ${b})`;
+    };
+    const row = (over: Partial<InboxItem> = {}) =>
+      item({ statuses: ['changes_requested'], ...over });
+
+    beforeEach(() => {
+      document.body.style.colorScheme = 'dark';
+    });
+    afterEach(() => {
+      document.body.style.colorScheme = '';
+    });
+
+    it('uses the mock palette for page, panels, rows and borders', async () => {
+      render(Page, { data: make('', flat([row(), item({ number: 8 })])) });
+      const root = document.querySelector('.inbox') as Element;
+      expect(css(root, 'background-color')).toBe('rgb(8, 11, 17)');
+      expect(
+        css(document.querySelector('aside') as Element, 'background-color'),
+      ).toBe('rgb(12, 15, 25)');
+      const rows = document.querySelectorAll('.table li');
+      expect(css(rows[0], 'background-color')).toBe('rgb(17, 22, 37)');
+      expect(css(rows[0], 'border-bottom-color')).toBe('rgb(31, 41, 61)');
+      expect(css(rows[0], 'border-left-color')).toBe('rgb(48, 34, 32)');
+      expect(css(rows[1], 'border-left-color')).toBe('rgba(0, 0, 0, 0)');
+      const h1 = page.getByRole('heading', { level: 1 }).element();
+      expect(h1.textContent).toBe('Review Inbox');
+      expect(css(h1, 'font-size')).toBe('24px');
+    });
+
+    it('selected repo and layout use the indigo selection, not zinc', async () => {
+      render(Page, { data: make('?repo=acme/web', flat([row()])) });
+      const sel = document.querySelector(
+        '.repos a[aria-current="page"]',
+      ) as Element;
+      expect(sel.textContent).toContain('acme/web');
+      expect(css(sel, 'background-color')).toBe('rgb(30, 27, 75)');
+      expect(css(sel, 'color')).toBe('rgb(243, 244, 246)');
+      const flatTab = page.getByRole('link', { name: 'Flat' }).element();
+      expect(css(flatTab, 'background-color')).toBe('rgb(22, 29, 48)');
+    });
+
+    it('colours status chips and the changes-requested accent', async () => {
+      render(Page, {
+        data: make(
+          '',
+          flat([
+            row(),
+            item({ number: 8, statuses: ['approved'] }),
+            item({ number: 9 }),
+          ]),
+        ),
+      });
+      const chip = (n: string) =>
+        document.querySelector(`.status-badge.${n}`) as Element;
+      expect(css(chip('changes_requested'), 'color')).toBe('rgb(251, 191, 36)');
+      expect(css(chip('approved'), 'color')).toBe('rgb(52, 211, 153)');
+      expect(css(chip('open'), 'color')).toBe('rgb(96, 165, 250)');
+      expect(css(chip('open'), 'background-color')).toBe('rgb(19, 30, 63)');
+      expect(css(chip('open'), 'border-top-color')).toBe('rgb(22, 45, 111)');
+      const ages = [...document.querySelectorAll('.age')];
+      expect(css(ages[0], 'color')).toBe('rgb(251, 191, 36)');
+      expect(css(ages[1], 'color')).toBe('rgb(107, 114, 128)');
+    });
+
+    it('styles the grouped header and the focused row', async () => {
+      render(Page, {
+        data: make('?group_by=repository', {
+          ...base,
+          group_by: 'repository',
+          groups: [
+            { repository: 'acme/web', items: [row(), item({ number: 8 })] },
+          ],
+        }),
+      });
+      const summary = document.querySelector('summary') as Element;
+      expect(css(summary, 'background-color')).toBe('rgb(22, 29, 48)');
+      expect(summary.textContent).toContain('2 reviews');
+      const link = page
+        .getByRole('link', { name: 'Add inbox' })
+        .first()
+        .element() as HTMLElement;
+      link.focus();
+      const li = link.closest('li') as Element;
+      const shadow = getComputedStyle(li).boxShadow;
+      expect(css(li, 'background-color')).toBe('rgb(21, 23, 47)');
+      expect(shadow).toContain('rgb(99, 102, 241)');
+    });
+
+    it('lays rows out as the mock table on wide viewports', async () => {
+      render(Page, { data: make('', flat([row()])) });
+      const head = document.querySelector('.table-head') as Element;
+      expect(css(head, 'background-color')).toBe('rgb(12, 15, 25)');
+      if (matchMedia('(min-width: 75rem)').matches) {
+        expect(css(head, 'display')).toBe('grid');
+        expect(
+          css(document.querySelector('.table li') as Element, 'display'),
+        ).toBe('grid');
+      }
+    });
+
+    it('keeps the search button radius, without !important', async () => {
+      render(Page, { data: make('', flat([item()])) });
+      const probe = document.createElement('div');
+      probe.style.borderRadius = 'var(--radius-md)';
+      document.body.append(probe);
+      const radius = getComputedStyle(probe).borderRadius;
+      probe.remove();
+      const btn = page.getByRole('button', { name: 'Search' }).element();
+      expect(radius).not.toBe('');
+      expect(getComputedStyle(btn).borderRadius).toBe(radius);
+      expect(
+        css(
+          page.getByRole('heading', { name: 'Repositories' }).element(),
+          'font-size',
+        ),
+      ).toBe('11px');
+    });
   });
 });

@@ -35,8 +35,13 @@ describe('prHref', () => {
 describe('relativeTime', () => {
   const now = Date.parse('2026-01-02T12:00:00Z');
   it('formats ages', () => {
-    expect(relativeTime('2026-01-02T09:00:00Z', now)).toBe('3 hours ago');
-    expect(relativeTime('2025-12-30T12:00:00Z', now)).toBe('3 days ago');
+    expect(relativeTime('2026-01-02T09:00:00Z', now)).toBe('3h ago');
+    expect(relativeTime('2025-12-30T12:00:00Z', now)).toBe('3d ago');
+  });
+  it('does not round up or invent a time', () => {
+    expect(relativeTime('2026-01-02T12:00:00Z', now)).toBe('just now');
+    expect(relativeTime('2025-12-02T12:00:00Z', now)).toBe('1mo ago');
+    expect(relativeTime('2024-01-02T12:00:00Z', now)).toBe('2y ago');
   });
   it('does not invent a time', () => {
     expect(relativeTime(null, now)).toBeNull();
