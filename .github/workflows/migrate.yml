@@ -1,6 +1,7 @@
 name: Run Database Migrations
 
 # Promotes migrations e2e -> production for the exact commit CI just validated on main.
+# Migrations are idempotent, so every successful main CI run promotes (a no-op when nothing is pending).
 # `workflow_run` is used (rather than `push`) so no database is touched until required CI passed.
 on:
   workflow_run:
@@ -17,37 +18,14 @@ permissions:
   contents: read
 
 jobs:
-  detect:
-    name: Detect migration changes
+  migrate-e2e:
+    name: Migrate e2e
     # Only trusted, successful push runs of CI on main in this repository.
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository
-    runs-on: ubuntu-latest
-    outputs:
-      changed: ${{ steps.diff.outputs.changed }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 2
-          persist-credentials: false
-
-      - name: Check for migration changes in the commit
-        id: diff
-        run: |
-          if git diff --quiet HEAD^ HEAD -- packages/db/drizzle; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-  migrate-e2e:
-    name: Migrate e2e
-    needs: detect
-    if: needs.detect.outputs.changed == 'true'
     runs-on: ubuntu-latest
     environment: e2e
     steps:
