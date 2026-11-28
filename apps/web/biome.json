@@ -48,6 +48,16 @@
   },
   "overrides": [
     {
+      "includes": ["src/components/sidebarItem/*.svg"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "noSvgWithoutTitle": "off"
+          }
+        }
+      }
+    },
+    {
       "includes": ["**/*.svelte"],
       "linter": {
         "rules": {
