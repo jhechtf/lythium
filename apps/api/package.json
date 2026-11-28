@@ -9,6 +9,7 @@
     "dev": "tsx watch main.ts",
     "build": "tsdown main.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "measure:inbox": "tsx scripts/measure-inbox.ts",
     "test": "vitest run"
   },
   "dependencies": {

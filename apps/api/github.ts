@@ -96,6 +96,55 @@ export async function githubPost(
   }
 }
 
+/** A GraphQL read can scan up to 100 PRs in one call: allow more than REST. */
+export const GRAPHQL_TIMEOUT_MS = 20_000;
+
+export interface GraphQLError {
+  type?: string;
+  message?: string;
+}
+
+/**
+ * POST a GraphQL query with the caller's token. Never throws. GraphQL answers
+ * 200 even for errors, so this maps them: a body with no `data` is a failed
+ * result (a `RATE_LIMITED` error → 429, anything else → 502). When `data` is
+ * present alongside `errors` the read is partial: `errors` is returned so the
+ * caller can treat it as incomplete.
+ */
+export async function githubGraphQL(
+  token: string,
+  query: string,
+  variables: Record<string, unknown>,
+  timeoutMs = GRAPHQL_TIMEOUT_MS,
+): Promise<
+  | { ok: true; data: Record<string, unknown>; errors: GraphQLError[] }
+  | { ok: false; result: FetchResult }
+> {
+  const result = await githubPost(
+    '/graphql',
+    token,
+    { query, variables },
+    timeoutMs,
+  );
+  if (!result.ok) return { ok: false, result };
+  const body = result.data as {
+    data?: unknown;
+    errors?: unknown;
+  } | null;
+  const errors = Array.isArray(body?.errors)
+    ? (body.errors as GraphQLError[])
+    : [];
+  const data = body?.data;
+  const limited = errors.some((e) => e?.type === 'RATE_LIMITED');
+  if (limited || typeof data !== 'object' || data === null) {
+    return {
+      ok: false,
+      result: { ...result, ok: false, status: limited ? 429 : 502 },
+    };
+  }
+  return { ok: true, data: data as Record<string, unknown>, errors };
+}
+
 /**
  * GitHub's explanation of a failed request (e.g. a 422's "Can not approve
  * your own pull request"), from its JSON error body: the entries in `errors`
@@ -161,7 +210,9 @@ export async function githubFetchAll<T>(
  * the rate-limit kind says so: `x-ratelimit-remaining: 0` (primary) or a
  * `Retry-After` header (secondary).
  */
-const isRateLimited = (result: Pick<FetchResult, 'status' | 'headers'>) =>
+export const isRateLimited = (
+  result: Pick<FetchResult, 'status' | 'headers'>,
+) =>
   result.status === 429 ||
   (result.status === 403 &&
     (result.headers.get('x-ratelimit-remaining') === '0' ||

@@ -11,6 +11,7 @@ import {
   githubFetchAll,
   upstreamError,
 } from './github.ts';
+import { inboxRoutes } from './inbox.ts';
 import {
   buildPRDetails,
   type GithubCheckRun,
@@ -328,6 +329,7 @@ export const app = new Hono()
       }),
     );
   })
+  .route('/', inboxRoutes)
   .route('/repos/:source/:owner/:repo/pr/:pr_number', submitReviewRoutes)
   .route('/repos/:source/:owner/:repo/pr/:pr_number', reviewGenerateRoutes)
   .route('/repos/:source/:owner/:repo/pr/:pr_number', reviewGroupRoutes)

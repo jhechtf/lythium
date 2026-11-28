@@ -26,6 +26,7 @@ GET /repos/:source/:owner/:repo/pr/:pr_number/diff
 GET /repos/:source/:owner/:repo/pr/:pr_number        # PR details + merge status (pr-details.ts)
 GET /repos/:source/:owner/:repo/pr/:pr_number/checks # CI state, counts and per-check detail (checks.ts)
 POST /repos/:source/:owner/:repo/pr/:pr_number/reviews # submit a review (pr-review.ts)
+GET /inbox                                           # PRs awaiting my review (inbox.ts)
 
 # Guided review (review-groups.ts; needs DATABASE_URL, else 503)
 GET    /repos/:source/:owner/:repo/pr/:pr_number/groups            # groups + unassigned files
@@ -121,3 +122,17 @@ Migrations: `pnpm --filter @lythium/db generate` after a schema change, `DB_URL=
 # Types contract
 
 `types.ts` (`GitHubRef`, `DiffFile`, `StackPR`, `StackDiff`, `StackItem`, `StackDiffResponse`, and the guided-review request/response types such as `ReviewGroup`, `ReviewGroupsResponse` `ReviewProgressResponse` and `GenerateGroupsResponse`) is imported by the web app as `@lythium/api/types` (see `package.json` `exports`). Any change to these shapes is a breaking change for `apps/web` — update both sides together.
+
+# Review inbox (LYT-59)
+
+`GET /inbox?status=&repo=&q=&group_by=none|repository&page=&per_page=` (`inbox.ts`). Caller token only; no database.
+
+- **One request**: a single GraphQL call (`githubGraphQL` in `github.ts`, 20s timeout) carries the scope search, the optional `q` search (`@include`d), per-PR metadata and `viewer { login }`. Cold cost is 1 outbound request however many PRs, because Workers caps subrequests per invocation (50 Free). Never add per-PR REST reads. The query is validated against GitHub's public schema, not (yet) the live API; it also selects `rateLimit { cost remaining resetAt }` (never returned to clients). To measure it for real, run `GITHUB_TOKEN=… pnpm --filter @lythium/api measure:inbox [q]` (dev only, sends the exact production query via `inboxRequest`, prints acceptance, sizes, cost and latency, never the token or PR data). Comments keep their inline counts; don't drop `reviewThreads.nodes.comments.totalCount` for cost without deciding to redefine `comments`.
+- **Candidates**: search `is:pr is:open archived:false review-requested:@me sort:updated-desc`, first 100. More matches than that (`issueCount`), a node GitHub couldn't return (e.g. SAML), a PR with more than 100 reviewers (statuses would be wrong), or any GraphQL `errors` next to data → `complete: false`. A response with no `data` is an error (`RATE_LIMITED` → 429, else 502), never an empty inbox. GraphQL search has no `incomplete_results` flag.
+- **`q`** is GitHub search syntax, run as a second search (scope + q) and intersected with the scope search, so it can only narrow. `OR`/`AND`/`NOT`, parentheses and the `is:`/`type:`/`state:`/`archived:`/`sort:`/review qualifiers → 400.
+- **Statuses** (`open`, `changes_requested`, `approved`) come from `latestOpinionatedReviews` (each reviewer's latest APPROVED/CHANGES_REQUESTED/DISMISSED review, so COMMENTED doesn't erase a decision and DISMISSED doesn't count); a PR can hold both. `open` = none. Bounded at 100 reviewers.
+- **Comments** = `comments.totalCount` + the sum of `reviewThreads(first: 100)` comment counts (inline). With more than 100 threads the total is a lower bound; that does **not** set `complete: false` (it changes no inclusion, status or count, and one big PR would otherwise mark the inbox incomplete for as long as it's listed).
+- **`requested_at`**: latest `ReviewRequestedEvent` to the caller's login among the newest 20 (`timelineItems(last: 20)`); team requests and deleted reviewers are ignored; null when none (no fallback timestamp). If the PR has more request events than the 20 read and none is to the caller, `requested_at` is unknown rather than absent: the item stays (null) and the inbox is `complete: false`. Finding the caller's request in the window is exact and flags nothing.
+- **Counts, `pending` and `repositories`** cover the whole inbox, ignoring filters and page. `pagination.total` is the filtered set.
+- **Order**: `requested_at` desc (nulls last), repo, number desc; paginate, then group (groups ordered by first item).
+- **Cache** (in memory, per process/isolate; hashed token → entries; only error-free reads): 30s from the read, not extended by hits. A token holds one **scope** entry (the enriched PRs, independent of `q`) and up to 5 **match** entries (`q` → hit keys only), each tied to the scope read it was made against: a refreshed, evicted or expired scope drops its matches, and a match read that finished after its scope was replaced isn't stored. A `q` miss with a warm scope sends only `MATCH_QUERY` (the hit search: no viewer or per-PR metadata), so `q` churn never re-reads the inbox; a cold read is still one request. Scope and match completeness are independent: a partial match flags only its own response. Bounded at 200 entries overall: room for a new entry drops expired entries, then the oldest match of the least recently used other token (its scope once it has none); replacing an entry evicts nothing else; a read or write marks its token as used. No in-flight sharing between requests.
