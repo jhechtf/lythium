@@ -1,0 +1,36 @@
+import { describe, expect, it } from 'vitest';
+import { inboxHref, parseInboxQuery, prHref, relativeTime } from './inbox';
+
+const parse = (s: string) => parseInboxQuery(new URLSearchParams(s));
+
+describe('inboxHref', () => {
+  it('preserves other filters and resets the page on a change', () => {
+    const q = parse('status=approved&q=x&group_by=repository&page=4');
+    expect(inboxHref(q, { repo: 'a/b' })).toBe(
+      '/?status=approved&repo=a%2Fb&q=x&group_by=repository',
+    );
+  });
+  it('keeps an explicit page and omits defaults', () => {
+    const q = parse('page=2');
+    expect(inboxHref(q, { page: 3 })).toBe('/?page=3');
+    expect(inboxHref(parse(''), {})).toBe('/');
+  });
+});
+
+describe('prHref', () => {
+  it('links to the existing review route', () => {
+    expect(prHref('acme/web', 7)).toBe('/pr/acme/web/7');
+  });
+});
+
+describe('relativeTime', () => {
+  const now = Date.parse('2026-01-02T12:00:00Z');
+  it('formats ages', () => {
+    expect(relativeTime('2026-01-02T09:00:00Z', now)).toBe('3 hours ago');
+    expect(relativeTime('2025-12-30T12:00:00Z', now)).toBe('3 days ago');
+  });
+  it('does not invent a time', () => {
+    expect(relativeTime(null, now)).toBeNull();
+    expect(relativeTime('garbage', now)).toBeNull();
+  });
+});

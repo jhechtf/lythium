@@ -14,7 +14,7 @@ import Stack from '../stack/stack.svelte';
         <div class="sr-only">User Profile</div>
         <CircleUserRoundIcon aria-details="User details" width="100%" />
       </a>
-      <a href="/inbox">
+      <a href="/">
         <div class="sr-only">Inbox</div>
         <InboxIcon aria-details="Inbox" width="100%" />
       </a>
