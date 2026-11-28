@@ -62,6 +62,7 @@ Use two Apps: a development App and a production App. A single App has one callb
 ### Environment variables
 
 Each environment gets its own App, so values differ per environment. Never commit them.
+A template is in [`apps/github-app/.env.example`](../apps/github-app/.env.example).
 
 | Variable | Used by | Notes |
 | --- | --- | --- |
