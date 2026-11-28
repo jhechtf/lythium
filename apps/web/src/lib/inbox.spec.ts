@@ -17,6 +17,15 @@ describe('inboxHref', () => {
   });
 });
 
+describe('parseInboxQuery', () => {
+  it('drops a repo that is not owner/name', () => {
+    expect(parse('repo=foo').repo).toBeNull();
+    expect(parse('repo=a/b/c').repo).toBeNull();
+    expect(parse('repo=a%2F').repo).toBeNull();
+    expect(parse('repo=a/b').repo).toBe('a/b');
+  });
+});
+
 describe('prHref', () => {
   it('links to the existing review route', () => {
     expect(prHref('acme/web', 7)).toBe('/pr/acme/web/7');

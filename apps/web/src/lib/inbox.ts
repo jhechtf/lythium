@@ -33,7 +33,7 @@ export function parseInboxQuery(params: URLSearchParams): InboxQuery {
     status: INBOX_STATUSES.includes(status as InboxStatus)
       ? (status as InboxStatus)
       : null,
-    repo: repo ? repo : null,
+    repo: repo && /^[\w.-]+\/[\w.-]+$/.test(repo) ? repo : null,
     q: (params.get('q') ?? '').trim().slice(0, MAX_Q),
     group: params.get('group_by') === 'repository' ? 'repository' : 'none',
     page: Number.isSafeInteger(page) && page > 0 ? page : 1,
