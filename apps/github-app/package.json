@@ -2,7 +2,7 @@
   "name": "@lythium/github-app",
   "type": "module",
   "scripts": {
-    "dev": "node main.ts",
+    "dev": "tsx watch main.ts",
     "build": "tsdown",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
