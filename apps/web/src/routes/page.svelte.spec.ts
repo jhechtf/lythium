@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import { parseInboxQuery } from '#lib/inbox.ts';
+import '../app.css';
 import Page from './+page.svelte';
 
 type Data = ComponentProps<typeof Page>['data'];
@@ -169,5 +170,31 @@ describe('/+page.svelte', () => {
     await expect
       .element(page.getByRole('searchbox', { name: 'Search reviews' }))
       .toHaveValue('bug');
+  });
+  it('styles headings and the search button without !important overrides', async () => {
+    render(Page, { data: make('', flat([item()])) });
+    const px = (el: Element | null) =>
+      el ? getComputedStyle(el).fontSize : null;
+    expect(
+      px(page.getByRole('heading', { name: 'Inbox', level: 1 }).element()),
+    ).toBe('20px');
+    expect(
+      px(
+        page
+          .getByRole('heading', { name: 'Reviews requested of you' })
+          .element(),
+      ),
+    ).toBe('20px');
+    expect(
+      px(page.getByRole('heading', { name: 'Repositories' }).element()),
+    ).toBe('12px');
+    const probe = document.createElement('div');
+    probe.style.borderRadius = 'var(--radius-md)';
+    document.body.append(probe);
+    const radius = getComputedStyle(probe).borderRadius;
+    probe.remove();
+    const btn = page.getByRole('button', { name: 'Search' }).element();
+    expect(radius).not.toBe('');
+    expect(getComputedStyle(btn).borderRadius).toBe(radius);
   });
 });

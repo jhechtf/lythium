@@ -29,10 +29,10 @@
 
 <div class="flex flex-1 min-w-0 flex-col md:flex-row">
   <aside class="w-full md:w-60 md:shrink-0 p-4 border-b md:border-b-0 md:border-r border-zinc-300 dark:border-zinc-800" aria-label="Inbox filters">
-    <h1 class="!text-xl">Inbox</h1>
+    <h1 class="text-xl">Inbox</h1>
     {#if inbox}
       <p class="text-sm opacity-70">{inbox.counts.pending} {inbox.counts.pending === 1 ? 'review' : 'reviews'} pending</p>
-      <h2 class="!text-xs uppercase tracking-wide opacity-60 mt-6 mb-2">Repositories</h2>
+      <h2 class="text-xs uppercase tracking-wide opacity-60 mt-6 mb-2">Repositories</h2>
       <ul class="repos">
         <li>
           <a href={inboxHref(query, { repo: null })} aria-current={query.repo ? undefined : 'page'}>
@@ -53,7 +53,7 @@
   <main class="flex-1 min-w-0" aria-busy={navigating.to !== null}>
     <header class="p-4 flex flex-col gap-3 border-b border-zinc-300 dark:border-zinc-800">
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <h2 class="!text-xl">Reviews requested of you</h2>
+        <h2 class="text-xl">Reviews requested of you</h2>
         <nav class="segmented" aria-label="Layout">
           <a href={inboxHref(query, { group: 'none' })} aria-current={query.group === 'none' ? 'true' : undefined}>Flat</a>
           <a href={inboxHref(query, { group: 'repository' })} aria-current={query.group === 'repository' ? 'true' : undefined}>Grouped</a>
@@ -189,7 +189,7 @@
     border: 1px solid light-dark(var(--color-zinc-300), var(--color-zinc-700));
     background: light-dark(var(--color-white), var(--color-zinc-950));
   }
-  .search-btn { border-radius: var(--radius-md) !important; }
+  .search-btn { border-radius: var(--radius-md); }
   .chip {
     display: inline-flex; gap: 0.375rem; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: var(--text-sm);
     border: 1px solid light-dark(var(--color-zinc-300), var(--color-zinc-700));
