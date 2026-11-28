@@ -35,6 +35,8 @@ export type DiffStatsProps = {
 </span>
 
 <style>
+  @reference "#app.css";
+
   .diff-stats {
     display: inline-flex;
     align-items: flex-start;
