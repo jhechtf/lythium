@@ -20,6 +20,6 @@ export default defineConfig({
 
   migrations: {
     prefix: 'timestamp',
-    schema: 'public',
+    schema: 'drizzle',
   },
 });
